@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import shlex
 from contextlib import asynccontextmanager
 from importlib import resources
@@ -148,31 +149,44 @@ def health() -> dict[str, Any]:
 def browse_repositories(path: str | None = None) -> dict[str, Any]:
     """List local folders for the browser-based repository picker.
 
-    This is intentionally read-only and constrained to the current user's home directory. The
-    endpoint does not inspect files beyond whether a folder is a Git worktree.
+    Read-only and confined to the user's home directory; the only thing inspected about a folder
+    is whether it is a Git worktree.
+
+    Every failure here is reported with its cause. This is the first screen someone touches, and
+    an opaque "Internal Server Error" in the one control that adds a repository leaves them with
+    nothing to do and nothing to report.
     """
     folder = _browse_path(path)
-    root = _browse_root()
+
+    entries: list[dict[str, Any]] = []
     try:
-        children = sorted(
-            (
-                child
-                for child in folder.iterdir()
-                if child.is_dir() and not child.name.startswith(".")
-            ),
-            key=lambda child: child.name.lower(),
-        )[:200]
+        children = sorted(folder.iterdir(), key=lambda child: child.name.lower())
     except OSError as exc:
-        raise HTTPException(400, f"cannot read folder: {exc}") from exc
+        raise HTTPException(400, f"cannot read {folder}: {exc.strerror or exc}") from exc
+
+    for child in children:
+        if child.name.startswith("."):
+            continue
+        try:
+            if not child.is_dir():
+                continue
+            is_repo = (child / ".git").exists()
+        except OSError:
+            # A single unreadable entry — a dead symlink, a folder behind macOS privacy controls —
+            # must not take down the listing around it.
+            continue
+        entries.append({"name": child.name, "path": str(child), "is_repo": is_repo})
+        if len(entries) >= 200:
+            break
+
+    root = _browse_root()
     return {
         "path": str(folder),
         "parent": str(folder.parent) if folder != root else None,
         "root": str(root),
-        "entries": [
-            {"name": child.name, "path": str(child), "is_repo": (child / ".git").exists()}
-            for child in children
-        ],
+        "entries": entries,
     }
+
 
 @api.get("/workspaces")
 def list_workspaces() -> list[dict[str, Any]]:
@@ -509,6 +523,12 @@ async def lifespan(app: FastAPI):
 
 def build_app() -> FastAPI:
     app = FastAPI(title="drove", version=__version__, lifespan=lifespan)
+
+    @app.exception_handler(Exception)
+    def _unexpected(request, exc):
+        # Log it properly so a recurrence is diagnosable, and hand the UI something it can show.
+        logging.getLogger("drove").exception("unhandled error on %s", request.url.path)
+        return JSONResponse(status_code=500, content={"detail": f"{type(exc).__name__}: {exc}"})
 
     @app.exception_handler(WorkspaceError)
     @app.exception_handler(WorktreeError)

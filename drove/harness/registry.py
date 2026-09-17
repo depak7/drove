@@ -6,6 +6,7 @@ commands are shown, never executed — we do not silently install someone's codi
 
 from __future__ import annotations
 
+import os
 import shutil
 import subprocess
 import tomllib
@@ -79,11 +80,37 @@ def get(name: str) -> Harness:
     if name not in PRESETS:
         planned = " (adapter not implemented yet)" if name in PLANNED else ""
         raise KeyError(f"unknown harness {name!r}{planned}")
-    return PRESETS[name].factory()
+    harness = PRESETS[name].factory()
+    # Spawn by absolute path. Resolving here means a GUI-launched daemon runs the same binary the
+    # UI told the user it found, instead of failing with ENOENT deep inside a run.
+    if resolved := which(PRESETS[name].binary):
+        harness.binary = resolved
+    return harness
+
+
+# Where coding CLIs actually install themselves. A daemon launched from a GUI — the desktop app,
+# a Dock icon, launchd — does not inherit your shell profile: its PATH is roughly
+# /usr/local/bin:/bin:/usr/bin, so every one of these is invisible and the app reports that you
+# have no harnesses installed while they sit right there.
+EXTRA_BIN_DIRS = (
+    Path.home() / ".local" / "bin",
+    Path("/opt/homebrew/bin"),
+    Path("/usr/local/bin"),
+    Path.home() / ".opencode" / "bin",
+    Path.home() / ".cargo" / "bin",
+    Path.home() / ".bun" / "bin",
+)
 
 
 def which(binary: str) -> str | None:
-    return shutil.which(binary)
+    """Locate a CLI by PATH, then by the places these tools actually live."""
+    if found := shutil.which(binary):
+        return found
+    for directory in EXTRA_BIN_DIRS:
+        candidate = directory / binary
+        if candidate.is_file() and os.access(candidate, os.X_OK):
+            return str(candidate)
+    return None
 
 
 def auth_state(name: str) -> AuthState:
@@ -137,11 +164,12 @@ def local_models() -> list[str]:
     `--oss --local-provider lmstudio`, so they are real options, not decoration. Embeddings are
     skipped — they cannot run an agent.
     """
-    if which("lms") is None:
+    exe = which("lms")
+    if exe is None:
         return []
     try:
         proc = subprocess.run(
-            ["lms", "ls"], capture_output=True, text=True, timeout=30, stdin=subprocess.DEVNULL
+            [exe, "ls"], capture_output=True, text=True, timeout=30, stdin=subprocess.DEVNULL
         )
     except (OSError, subprocess.SubprocessError):
         return []
@@ -177,10 +205,10 @@ def list_models(name: str) -> list[str]:
         return []
 
     models: list[str] = list(preset.known_models)
-    if preset.list_models_cmd and which(preset.list_models_cmd[0]):
+    if preset.list_models_cmd and (exe := which(preset.list_models_cmd[0])):
         try:
             proc = subprocess.run(
-                preset.list_models_cmd,
+                [exe, *preset.list_models_cmd[1:]],
                 capture_output=True, text=True, timeout=30, stdin=subprocess.DEVNULL,
             )
             if proc.returncode == 0:

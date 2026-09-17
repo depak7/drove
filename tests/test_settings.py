@@ -122,3 +122,27 @@ def test_harness_endpoint_reports_what_each_one_can_do(client):
     assert set(rows) == set(registry.PRESETS)
     assert rows["opencode"]["supports_schema"] is False, "schema rides in the prompt there"
     assert rows["claude"]["supports_schema"] is True
+
+
+# --- discovery must not depend on a shell PATH -------------------------------------------
+
+def test_clis_are_found_without_a_shell_path(monkeypatch):
+    """A GUI-launched daemon gets /usr/local/bin:/bin:/usr/bin and none of these are on it.
+
+    Relying on PATH alone made the app report every harness as missing and hand the settings
+    screen an empty model list, while the binaries sat in ~/.local/bin.
+    """
+    monkeypatch.setattr(registry.shutil, "which", lambda _: None)
+
+    found = {name: registry.which(name) for name in registry.PRESETS}
+    assert any(found.values()), f"nothing resolved outside PATH: {found}"
+    for name, path in found.items():
+        if path:
+            assert Path(path).is_absolute(), f"{name} must resolve to an absolute path"
+
+
+def test_get_returns_a_harness_bound_to_an_absolute_binary():
+    """Spawning by bare name fails with ENOENT deep inside a run rather than at discovery."""
+    harness = registry.get("claude")
+    if registry.which("claude"):
+        assert Path(harness.binary).is_absolute()

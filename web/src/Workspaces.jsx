@@ -119,15 +119,20 @@ function FolderBrowser({ onPick, onType }) {
   const [data, setData] = useState(null)
   const [error, setError] = useState('')
 
+  const [nonce, setNonce] = useState(0)
   useEffect(() => {
+    setError('')
     api.browseRepos(at).then(setData).catch((e) => setError(String(e.message ?? e)))
-  }, [at])
+  }, [at, nonce])
 
   if (error) {
     return (
-      <div className="wsrow">
-        <span className="note bad">{error}</span>
-        <button className="ghost tiny" onClick={onType}>type a path</button>
+      <div className="browser-error">
+        <div className="note bad">{error}</div>
+        <div className="wsrow">
+          <button className="tiny" onClick={() => { setError(''); setAt(at) }}>Retry</button>
+          <button className="ghost tiny" onClick={onType}>Type a path instead</button>
+        </div>
       </div>
     )
   }
