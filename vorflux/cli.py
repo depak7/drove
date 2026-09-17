@@ -435,10 +435,33 @@ def features_cmd(
 
 
 @app.command()
-def serve() -> None:
-    """Start the daemon and web UI (M4)."""
-    _err("serve lands in M4; use `vorflux run` for now")
-    raise typer.Exit(2)
+def serve(
+    repo: Path = typer.Option(Path("."), "--repo", "-C", help="Repository root"),
+    port: int = typer.Option(8787, help="Port to listen on"),
+    host: str = typer.Option("127.0.0.1", help="Interface to bind"),
+    open_browser: bool = typer.Option(True, "--open/--no-open", help="Open the UI on start"),
+) -> None:
+    """Start the local daemon and web UI."""
+    import uvicorn
+
+    from vorflux.api import server
+
+    repo, _ = _open_repo(repo)
+    worktree.prune(repo)
+    server.REPO = repo
+
+    url = f"http://{host}:{port}"
+    typer.secho(f"vorflux {__version__}", bold=True)
+    typer.secho(f"  repo {repo}", fg=ui.DIM)
+    typer.secho(f"  {url}", fg=typer.colors.GREEN)
+
+    if open_browser:
+        import threading
+        import webbrowser
+
+        threading.Timer(1.0, lambda: webbrowser.open(url)).start()
+
+    uvicorn.run(server.build_app(), host=host, port=port, log_level="warning")
 
 
 def main() -> None:

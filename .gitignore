@@ -6,10 +6,12 @@ build/
 *.egg-info/
 .pytest_cache/
 .ruff_cache/
-vorflux/web/*
-!vorflux/web/.gitkeep
 web/node_modules/
-web/dist/
+
+# Built UI assets ARE committed. The install path is `uv tool install git+...`, which builds the
+# wheel from this source tree — so anything not in git is not in the install. Building at install
+# time instead would put Node on the critical path for every user, which is exactly what shipping
+# the UI inside the Python package was meant to avoid. Rebuild with `cd web && npm run build`.
 .DS_Store
 .idea/
 .vscode/

@@ -23,11 +23,18 @@ cd ~/my-repo && vorflux init && vorflux doctor
 ## Use
 
 ```bash
+vorflux serve                                 # daemon + web UI on http://localhost:8787
+
 vorflux plan "add rate limiting to the API"   # plan, then approve / decline / type feedback
 vorflux execute <feature>                     # implement → review → fix → verify → evidence
 vorflux features                              # what exists and where it got to
 vorflux pivot <feature> "use a token bucket"  # change direction; keeps the branch and the agent's memory
 ```
+
+The web UI and the CLI are two clients of the same engine and the same SQLite database — start a
+feature in one and finish it in the other. The one thing the daemon adds is that the approval gate
+becomes a state rather than a blocking prompt, so several features can sit waiting on you at once
+while others run.
 
 Each feature gets its own git worktree under `~/.vorflux/worktrees/`, so runs never collide and
 your own checkout is never touched. A worktree is only ever removed once its commits are in the
