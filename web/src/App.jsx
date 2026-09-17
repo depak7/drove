@@ -193,8 +193,6 @@ export default function App() {
       <div className="work">
         <nav className="nav">
           <div className="group">
-            {/* The workspace's own name heads its screens; a generic "Workspace" label here
-                just repeated the switcher sitting directly above it. */}
             <span className="eyebrow">{workspace?.name ?? 'Workspace'}</span>
             {[
               ['overview', '◉', 'Overview'],
@@ -209,14 +207,34 @@ export default function App() {
               >
                 <span className="ico">{ico}</span>
                 {label}
-                {key === 'overview' && waiting > 0 && <span className="badge">{waiting}</span>}
               </button>
             ))}
           </div>
+
+          {blocked.length > 0 && (
+            <div className="group needs">
+              {/* Always in view, on every screen. Something stuck is the one thing that must not
+                  wait for you to navigate back to Overview to be noticed. */}
+              <span className="eyebrow">
+                Needs you <span className="count">{blocked.length}</span>
+              </span>
+              {blocked.map((f) => (
+                <button
+                  key={f.id}
+                  className={`nyitem ${f.id === selected ? 'on' : ''}`}
+                  onClick={() => setSelected(f.id)}
+                  title={`${f.title} — ${NEEDS_YOU[f.status]?.why ?? ''}`}
+                >
+                  <span className={`dot ${f.status}`} />
+                  <span className="t">{f.title}</span>
+                </button>
+              ))}
+            </div>
+          )}
+
           <div className="group">
             <span className="eyebrow">Configure</span>
             <button onClick={() => setSettings(true)}><span className="ico">⚙</span>Stages</button>
-            {/* This sheet manages the workspace itself — its name and which repos are in it. */}
             <button onClick={() => setSheet(true)}><span className="ico">▤</span>Workspace</button>
           </div>
         </nav>
@@ -267,24 +285,6 @@ export default function App() {
             </div>
           ) : (
             <div className="pane-inner narrow">
-              {blocked.length > 0 && (
-                <section className="needsyou">
-                  <div className="needsyou-head">
-                    <span className="count">{blocked.length}</span>
-                    <b>Needs you</b>
-                  </div>
-                  {blocked.map((f) => (
-                    <button className="nyrow" key={f.id} onClick={() => setSelected(f.id)}>
-                      <div className="body">
-                        <div className="t">{f.title}</div>
-                        <div className="why">{NEEDS_YOU[f.status]?.why}</div>
-                      </div>
-                      <span className="verb">{NEEDS_YOU[f.status]?.verb} →</span>
-                    </button>
-                  ))}
-                </section>
-              )}
-
               <div className="hero">
                 <h1>What do you want built?</h1>
                 {!ready && <p className="sub">Add a repository first — {workspace.name} has none.</p>}
