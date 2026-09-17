@@ -2,10 +2,12 @@
 
 from __future__ import annotations
 
+import shutil
+
 import pytest
 from fastapi.testclient import TestClient
 
-from drove import config
+from drove import config, db
 from drove.api import jobs, server
 from drove.api.bus import Bus
 from drove.vcs import git
@@ -15,6 +17,7 @@ from .conftest import make_repo
 
 @pytest.fixture
 def client(state, monkeypatch):
+    server._reset_landed_cache()
     started: list[tuple[str, tuple]] = []
     monkeypatch.setattr(jobs, "start_plan", lambda *a, **k: started.append(("plan", a)))
     monkeypatch.setattr(jobs, "start_cycle", lambda *a, **k: started.append(("cycle", a)))
@@ -31,6 +34,17 @@ def new_workspace(client, name="product", repos=("api",)):
 
 def new_feature(client, ws, task="add a thing"):
     return client.post("/api/features", json={"task": task, "workspace_id": ws["id"]}).json()
+
+
+def deliver(feature_id):
+    with db.connect() as conn:
+        db.set_feature_status(conn, feature_id, "delivered")
+
+
+def commit_feature_file(path, name):
+    (path / name).write_text("y = 2\n")
+    git.git(path, "add", "-A")
+    git.git(path, "commit", "-qm", f"add {name}")
 
 
 # --- workspaces --------------------------------------------------------------------------
@@ -140,6 +154,102 @@ def test_features_are_listed_per_workspace(client):
     assert len(client.get("/api/features").json()) == 2
     scoped = client.get("/api/features", params={"workspace_id": a["id"]}).json()
     assert [f["title"] for f in scoped] == ["in alpha"]
+
+
+def test_a_merged_feature_is_reported_as_landed(client, monkeypatch):
+    ws = new_workspace(client, repos=("api", "web"))
+    feature = new_feature(client, ws)
+    root = config.HOME / "worktrees" / "product" / feature["id"]
+    for repo in ws["repos"]:
+        commit_feature_file(root / repo["name"], f"{repo['name']}-feature.py")
+        git.git(repo["path"], "merge", "--no-edit", "-q", feature["branch"])
+    deliver(feature["id"])
+    emitted = []
+    monkeypatch.setattr(jobs, "emit", lambda *args, **kwargs: emitted.append((args, kwargs)))
+
+    listed = client.get("/api/features").json()
+    assert listed[0]["status"] == "landed"
+    assert emitted == [((feature["id"], "status"), {"status": "landed"})]
+    monkeypatch.setattr(
+        server.trees_mod,
+        "has_landed",
+        lambda trees: pytest.fail("a persisted landed feature must not be checked again"),
+    )
+    assert client.get("/api/features").json()[0]["status"] == "landed"
+    with db.connect() as conn:
+        assert db.get_feature(conn, feature["id"])["status"] == "landed"
+
+
+def test_a_half_merged_feature_is_not_landed(client):
+    ws = new_workspace(client, repos=("api", "web"))
+    feature = new_feature(client, ws)
+    root = config.HOME / "worktrees" / "product" / feature["id"]
+    for repo in ws["repos"]:
+        commit_feature_file(root / repo["name"], f"{repo['name']}-feature.py")
+    git.git(ws["repos"][0]["path"], "merge", "--no-edit", "-q", feature["branch"])
+    deliver(feature["id"])
+
+    assert client.get("/api/features").json()[0]["status"] == "delivered"
+
+
+def test_only_delivered_features_are_checked_for_landing(client, monkeypatch):
+    ws = new_workspace(client)
+    features = [new_feature(client, ws, status) for status in (
+        "planning", "needs human", "abandoned", "delivered"
+    )]
+    statuses = ("planning", "needs_human", "abandoned", "delivered")
+    with db.connect() as conn:
+        for feature, status in zip(features, statuses, strict=True):
+            db.set_feature_status(conn, feature["id"], status)
+
+    checked = []
+    monkeypatch.setattr(
+        server.trees_mod,
+        "has_landed",
+        lambda trees: checked.append(trees.root.name) or False,
+    )
+
+    assert client.get("/api/features").status_code == 200
+    assert checked == [features[-1]["id"]]
+
+
+def test_repeated_feature_lists_use_the_landed_cache(client, monkeypatch):
+    feature = new_feature(client, new_workspace(client))
+    deliver(feature["id"])
+    checked = []
+    monkeypatch.setattr(
+        server.trees_mod,
+        "has_landed",
+        lambda trees: checked.append(trees.root.name) or False,
+    )
+
+    client.get("/api/features")
+    client.get("/api/features")
+
+    assert checked == [feature["id"]]
+
+
+def test_the_landed_check_never_recreates_a_removed_worktree(client):
+    feature = new_feature(client, new_workspace(client))
+    root = config.HOME / "worktrees" / "product" / feature["id"]
+    deliver(feature["id"])
+    shutil.rmtree(root)
+
+    assert client.get("/api/features").status_code == 200
+    assert not root.exists()
+
+
+def test_a_missing_repository_does_not_break_the_feature_list(client):
+    ws = new_workspace(client)
+    feature = new_feature(client, ws)
+    deliver(feature["id"])
+    repo = client.projects / "api"
+    repo.rename(client.projects / "api-moved")
+
+    response = client.get("/api/features")
+
+    assert response.status_code == 200
+    assert response.json()[0]["status"] == "delivered"
 
 
 def test_approve_starts_the_cycle(client):

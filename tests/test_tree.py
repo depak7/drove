@@ -52,6 +52,15 @@ def test_every_repo_gets_a_worktree_under_one_feature_root(ws):
     assert all(t.branch == "dv/task-1" for t in trees)
 
 
+def test_attach_describes_trees_without_creating_them(ws):
+    branch = tree.branch_for("task-1")
+    trees = tree.attach(ws, "task-1", branch)
+
+    assert [t.repo.name for t in trees] == ["api", "web"]
+    assert trees.branch == branch
+    assert not any(t.path.exists() for t in trees)
+
+
 def test_repos_stay_isolated_from_each_other(ws):
     trees = tree.create(ws, "task-1")
     api, web = trees.by_name("api"), trees.by_name("web")
@@ -119,6 +128,19 @@ def test_landed_requires_every_changed_repo_to_be_merged(ws):
 
     git.git(web.repo.path, "merge", "--no-edit", "-q", web.branch)
     assert tree.has_landed(trees)
+
+
+def test_landed_is_answered_from_the_repository_not_the_worktree(ws):
+    trees = tree.create(ws, "task-1")
+    api, web = trees.by_name("api"), trees.by_name("web")
+    commit_in(api.path, "feature.py")
+    commit_in(web.path, "page.py")
+    git.git(api.repo.path, "merge", "--no-edit", "-q", api.branch)
+    git.git(web.repo.path, "merge", "--no-edit", "-q", web.branch)
+
+    attached = tree.attach(ws, "task-1", trees.branch)
+
+    assert tree.has_landed(attached)
 
 
 def test_a_repo_with_a_different_default_branch_is_detected(tmp_path, monkeypatch):

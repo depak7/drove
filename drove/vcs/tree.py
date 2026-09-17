@@ -99,6 +99,26 @@ def create(workspace: Workspace, feature_id: str, branch: str | None = None) -> 
     return FeatureTrees(root=root, trees=trees)
 
 
+def attach(workspace: Workspace, feature_id: str, branch: str) -> FeatureTrees:
+    """Describe a feature's trees without creating anything.
+
+    `has_landed` asks git about the repository — which branches exist and what base contains — so
+    it needs the branch names, not the worktrees. Going through `create` would recreate worktrees
+    that teardown removed on purpose.
+    """
+    return FeatureTrees(
+        root=workspace.feature_root(feature_id),
+        trees=[
+            Tree(
+                repo=repo,
+                path=workspace.worktree_path(feature_id, repo),
+                branch=branch,
+            )
+            for repo in workspace.repos
+        ],
+    )
+
+
 def unintegrated(tree: Tree) -> list[str]:
     return git.commits_ahead(tree.repo.path, tree.base, tree.branch)
 

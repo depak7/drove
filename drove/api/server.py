@@ -103,7 +103,57 @@ def _workspace_json(conn, ws: ws_mod.Workspace) -> dict[str, Any]:
     }
 
 
-def _feature_json(conn, row) -> dict[str, Any]:
+# `landed` is reachable from exactly one status. A run ends `delivered`; a person then merges the
+# branch. Nothing else can become landed, so nothing else is worth a git call.
+LANDABLE = {"delivered"}
+
+# Every bus event makes the app refetch the feature list, and a run emits one per tool call. A
+# merge is a human action, so answering "has this been merged" from a few seconds ago is always
+# good enough — and it is the difference between one git call and hundreds.
+_LANDED_TTL = 5.0
+_landed_checked: dict[str, float] = {}
+
+
+def _reset_landed_cache() -> None:
+    _landed_checked.clear()
+
+
+def _check_landed(conn, row, workspace: ws_mod.Workspace | None = None) -> str:
+    """Read-through: promote a merged `delivered` feature to `landed`, once.
+
+    `has_landed` shells out to git per repo, so this is deliberately narrow: only a feature whose
+    branch is merged can change state, the result is persisted, and a landed feature is never
+    asked again. The set that costs anything is "delivered but not yet merged" — your open work,
+    not your history.
+    """
+    status = row["status"]
+    workspace_id = row["workspace_id"]
+    if status not in LANDABLE or not workspace_id:
+        return status
+
+    now = time.monotonic()
+    if now - _landed_checked.get(row["id"], 0) < _LANDED_TTL:
+        return status
+    _landed_checked[row["id"]] = now
+
+    workspace = workspace or ws_mod.get(conn, workspace_id)
+    if workspace is None:
+        return status
+
+    try:
+        trees = trees_mod.attach(workspace, row["id"], row["branch"])
+        if not trees_mod.has_landed(trees):
+            return status
+    except GitError:
+        return status
+
+    db.set_feature_status(conn, row["id"], "landed")
+    _landed_checked.pop(row["id"], None)
+    jobs.emit(row["id"], "status", status="landed")
+    return "landed"
+
+
+def _feature_json(conn, row, workspace: ws_mod.Workspace | None = None) -> dict[str, Any]:
     runs = db.list_runs(conn, row["id"])
     latest_plan = next((r for r in reversed(runs) if r["plan_json"]), None)
     return {
@@ -112,7 +162,7 @@ def _feature_json(conn, row) -> dict[str, Any]:
         "title": row["title"],
         "branch": row["branch"],
         "base": row["base_branch"],
-        "status": row["status"],
+        "status": _check_landed(conn, row, workspace),
         "worktree": row["worktree_path"],
         "created_at": row["created_at"],
         "busy": jobs.is_busy(row["id"]),
@@ -376,7 +426,11 @@ def list_features(workspace_id: str | None = None) -> list[dict[str, Any]]:
             if workspace_id
             else db.list_features(conn)
         )
-        return [_feature_json(conn, row) for row in rows]
+        workspaces = {
+            workspace_id: ws_mod.get(conn, workspace_id)
+            for workspace_id in {row["workspace_id"] for row in rows if row["workspace_id"]}
+        }
+        return [_feature_json(conn, row, workspaces.get(row["workspace_id"])) for row in rows]
 
 
 @api.post("/features")

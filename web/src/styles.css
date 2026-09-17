@@ -677,11 +677,13 @@ button.chain:hover { background: var(--surface-2); }
 }
 .bcard:hover { border-color: var(--line-strong); background: var(--surface-2); }
 .bcard.gate { border-color: var(--accent); box-shadow: 0 0 0 2px var(--accent-soft); }
+.bcard.landed { opacity: .72; border-color: var(--line); }
 .bcard .t { font-size: 12.5px; line-height: 1.4; font-weight: 500;
   display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; }
 .bcard .meta { display: flex; align-items: center; gap: 7px; }
 .bcard .step { font-size: 10.5px; color: var(--text-3); margin-left: auto; }
 .bcard .br { font-size: 10px; color: var(--text-3); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.bcard.landed .br::before { content: '✓ '; color: var(--ok); }
 
 /* agents */
 .agents { display: grid; gap: 7px; }

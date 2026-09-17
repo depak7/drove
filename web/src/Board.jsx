@@ -28,7 +28,9 @@ export function Board({ features, onOpen }) {
   return (
     <div className="board">
       {COLUMNS.map((col) => {
-        const cards = features.filter((f) => columnFor(f) === col.key)
+        const cards = features
+          .filter((f) => columnFor(f) === col.key)
+          .sort((a, b) => col.key === 'done' ? Number(a.status === 'landed') - Number(b.status === 'landed') : 0)
         return (
           <div className="bcol" key={col.key}>
             <div className="bcol-head">
@@ -52,7 +54,7 @@ function BoardCard({ feature, onOpen }) {
   const { at } = progress(status)
   return (
     <button
-      className={`bcard ${feature.status === 'awaiting_approval' ? 'gate' : ''}`}
+      className={`bcard ${feature.status === 'awaiting_approval' ? 'gate' : ''} ${feature.status === 'landed' ? 'landed' : ''}`}
       onClick={() => onOpen(feature.id)}
     >
       <div className="t">{feature.title}</div>
