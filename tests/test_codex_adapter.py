@@ -93,10 +93,24 @@ def test_schema_is_passed_as_a_file_path():
     assert argv[argv.index("--output-schema") + 1] == "/tmp/s.json"
 
 
-def test_skip_git_repo_check_only_outside_a_repo(tmp_path):
-    """Codex aborts in a non-repo before emitting any event, which is a baffling failure mode."""
-    assert "--skip-git-repo-check" in CodexHarness().build_argv(spec(cwd=tmp_path))
+def test_skip_git_repo_check_on_both_paths_outside_a_repo(tmp_path):
+    """The feature root holds the repo worktrees and is not itself a repo, so this is the norm.
 
+    `codex exec resume` enforces the same rule and accepts the same flag; leaving it off there
+    failed every retry that resumed a codex session, after the work was already done.
+    """
+    fresh = CodexHarness().build_argv(spec(cwd=tmp_path))
+    resumed = CodexHarness().build_argv(spec(cwd=tmp_path, session_id="01a0", resume=True))
+
+    assert "--skip-git-repo-check" in fresh
+    assert "--skip-git-repo-check" in resumed, "a resumed run refuses to start without it"
+
+
+def test_the_flag_is_omitted_inside_a_repo(tmp_path):
     # A worktree's .git is a FILE, not a directory — presence is what matters.
     (tmp_path / ".git").write_text("gitdir: /elsewhere/.git/worktrees/task-1\n")
+
     assert "--skip-git-repo-check" not in CodexHarness().build_argv(spec(cwd=tmp_path))
+    assert "--skip-git-repo-check" not in CodexHarness().build_argv(
+        spec(cwd=tmp_path, session_id="01a0", resume=True)
+    )

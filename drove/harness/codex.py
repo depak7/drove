@@ -49,18 +49,23 @@ class CodexHarness:
     ) -> list[str]:
         resuming = spec.resume and spec.session_id
 
+        # Codex refuses to start outside a git repo: "Not inside a trusted directory and
+        # --skip-git-repo-check was not specified." This is the normal case, not an edge case —
+        # a feature's working directory is the root that HOLDS its repo worktrees, so it is not
+        # itself a repo. Needed on both paths: `exec resume` enforces the same rule and accepts
+        # the same flag, and omitting it there failed every retry that resumed a codex session.
+        # (`.git` is a FILE inside a worktree, not a directory, so test for existence.)
+        #
+        # Placed here, early, rather than appended: it takes no value, and a bare flag left
+        # adjacent to the trailing prompt is the shape that let a variadic option swallow claude's.
+        trust = [] if (spec.cwd / ".git").exists() else ["--skip-git-repo-check"]
+
         if resuming:
             # Flags first: `codex exec resume [OPTIONS] [SESSION_ID] [PROMPT]`.
-            argv = [self.binary, "exec", "resume", "--json"]
+            argv = [self.binary, "exec", "resume", "--json", *trust]
         else:
             sandbox = "read-only" if spec.mode == "readonly" else "workspace-write"
-            argv = [self.binary, "exec", "--json", "-s", sandbox, "-C", str(spec.cwd)]
-            # Codex refuses to run outside a git repo: "Not inside a trusted directory and
-            # --skip-git-repo-check was not specified." Our worktrees are always repos, so this
-            # only fires for scratch dirs — but failing there with no session at all is a
-            # confusing way to learn it. Note `.git` is a FILE inside a worktree, not a dir.
-            if not (spec.cwd / ".git").exists():
-                argv.append("--skip-git-repo-check")
+            argv = [self.binary, "exec", "--json", *trust, "-s", sandbox, "-C", str(spec.cwd)]
             for d in spec.extra_dirs:
                 argv += ["--add-dir", str(d)]
 
