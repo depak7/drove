@@ -129,6 +129,7 @@ function createWindow() {
 
 app.whenReady().then(async () => {
   startEngine()
+
   ipcMain.handle('repository:choose', async () => {
     const result = await dialog.showOpenDialog(mainWindow, { properties: ['openDirectory'] })
     return result.canceled ? null : result.filePaths[0]
@@ -142,11 +143,15 @@ app.whenReady().then(async () => {
     if (busy) pulseWindow.showInactive()
     else pulseWindow.hide()
   })
+
+  // Wait for the engine BEFORE loading the renderer. The window used to open instantly and fire
+  // its first requests while the Python process was still starting, so every launch logged
+  // ECONNREFUSED for /api/workspaces and /api/events and the app came up empty.
+  const up = await waitForEngine()
+
   createWindow()
   createPulse()
 
-  // Tell the user what went wrong instead of leaving them with a blank window and a proxy error.
-  const up = await waitForEngine()
   if (!up) {
     dialog.showErrorBox(
       'The engine did not start',
@@ -156,10 +161,11 @@ app.whenReady().then(async () => {
     )
   }
 })
-app.on('before-quit', () => engine?.kill())
+
 app.on('activate', () => {
   if (BrowserWindow.getAllWindows().length === 0) createWindow()
 })
+app.on('before-quit', () => engine?.kill())
 app.on('window-all-closed', () => {
   // macOS convention: the app stays alive with no windows. The engine sidecar stays with it, so
   // runs in flight are not killed by closing the window.

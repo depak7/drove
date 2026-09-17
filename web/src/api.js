@@ -3,6 +3,26 @@ const json = async (res) => {
   return res.json()
 }
 
+/**
+ * GET with a short retry.
+ *
+ * The engine is a separate process. It is slow to boot, and it can be restarted underneath a
+ * window that stays open. A connection refused a second after launch is not an error worth
+ * showing anyone — it is the app being early.
+ */
+const get = async (url, attempts = 5) => {
+  for (let i = 0; i < attempts; i += 1) {
+    try {
+      return await fetch(url).then(json)
+    } catch (err) {
+      const refused = err instanceof TypeError || /fetch|network|refused/i.test(String(err.message))
+      if (!refused || i === attempts - 1) throw err
+      await new Promise((r) => setTimeout(r, 400 * (i + 1)))
+    }
+  }
+  return undefined
+}
+
 const post = (url, body) =>
   fetch(url, {
     method: 'POST',
@@ -11,11 +31,11 @@ const post = (url, body) =>
   }).then(json)
 
 export const api = {
-  health: () => fetch('/api/health').then(json),
+  health: () => get('/api/health'),
   browseRepos: (path) => fetch(`/api/repos/browse${path ? `?path=${encodeURIComponent(path)}` : ''}`).then(json),
 
-  workspaces: () => fetch('/api/workspaces').then(json),
-  harnesses: () => fetch('/api/harnesses').then(json),
+  workspaces: () => get('/api/workspaces'),
+  harnesses: () => get('/api/harnesses'),
   saveSettings: (id, harness, models) =>
     fetch(`/api/workspaces/${id}/settings`, {
       method: 'PUT',
@@ -30,10 +50,10 @@ export const api = {
     }).then(json),
 
   features: (workspaceId) =>
-    fetch(workspaceId ? `/api/features?workspace_id=${workspaceId}` : '/api/features').then(json),
-  feature: (id) => fetch(`/api/features/${id}`).then(json),
-  diff: (id) => fetch(`/api/features/${id}/diff`).then(json),
-  evidence: (id) => fetch(`/api/features/${id}/evidence`).then(json),
+    get(workspaceId ? `/api/features?workspace_id=${workspaceId}` : '/api/features'),
+  feature: (id) => get(`/api/features/${id}`),
+  diff: (id) => get(`/api/features/${id}/diff`),
+  evidence: (id) => get(`/api/features/${id}/evidence`),
   create: (task, workspaceId) =>
     post('/api/features', { task, workspace_id: workspaceId }),
   revise: (id, feedback) => post(`/api/features/${id}/revise`, { feedback }),

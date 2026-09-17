@@ -1,4 +1,5 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
+import { api } from './api'
 import { chooseRepository, isDesktop } from './desktop'
 
 /** Workspace switcher and repo management, as a sheet off the top bar. */
@@ -66,21 +67,28 @@ export function WorkspaceSheet({ workspaces, current, onClose, onSelect, onCreat
                 </span>
               ))}
             </div>
-            {typing || !isDesktop ? (
-              <div className="wsrow">
-                <input
-                  autoFocus={typing} placeholder="/path/to/repo" value={path}
-                  onChange={(e) => setPath(e.target.value)}
-                  onKeyDown={(e) => { if (e.key === 'Enter') addRepo() }}
-                />
-                <button onClick={addRepo} disabled={!path.trim()}>Add</button>
-              </div>
-            ) : (
+            {isDesktop && !typing ? (
               <div className="wsrow">
                 <button onClick={addRepo}>Choose folder…</button>
                 <button className="ghost" onClick={() => setTyping(true)}>Type a path</button>
               </div>
+            ) : typing ? (
+              <div className="wsrow">
+                <input
+                  autoFocus placeholder="/path/to/repo" value={path}
+                  onChange={(e) => setPath(e.target.value)}
+                  onKeyDown={(e) => { if (e.key === 'Enter') addRepo() }}
+                />
+                <button onClick={addRepo} disabled={!path.trim()}>Add</button>
+                <button className="ghost tiny" onClick={() => setTyping(false)}>browse</button>
+              </div>
+            ) : (
+              <FolderBrowser
+                onPick={(p) => onAddRepo(p)}
+                onType={() => setTyping(true)}
+              />
             )}
+
             {current.repos.length > 1 && (
               <div className="note">A feature here may change several repos in one run; their
                 branches must be merged together.</div>
@@ -89,5 +97,64 @@ export function WorkspaceSheet({ workspaces, current, onClose, onSelect, onCreat
         )}
       </div>
     </>
+  )
+}
+
+
+/** Show the tail of a long path; the full one is in the tooltip. */
+function shorten(path, keep = 3) {
+  const parts = String(path).split('/').filter(Boolean)
+  return (parts.length > keep ? '…/' : '/') + parts.slice(-keep).join('/')
+}
+
+/**
+ * Folder picker for a plain browser tab, where there is no native dialog.
+ *
+ * Typing an absolute path from memory is a miserable way to add a repository, and it is the one
+ * step between installing this and using it. The daemon serves a read-only listing under your
+ * home directory; folders that are already Git worktrees are marked so you can see the target.
+ */
+function FolderBrowser({ onPick, onType }) {
+  const [at, setAt] = useState(null)
+  const [data, setData] = useState(null)
+  const [error, setError] = useState('')
+
+  useEffect(() => {
+    api.browseRepos(at).then(setData).catch((e) => setError(String(e.message ?? e)))
+  }, [at])
+
+  if (error) {
+    return (
+      <div className="wsrow">
+        <span className="note bad">{error}</span>
+        <button className="ghost tiny" onClick={onType}>type a path</button>
+      </div>
+    )
+  }
+  if (!data) return <div className="note">loading…</div>
+
+  return (
+    <div className="browser">
+      <div className="crumbs">
+        <button className="ghost tiny" disabled={!data.parent} onClick={() => setAt(data.parent)}>
+          ↑ up
+        </button>
+        <span className="mono path" title={data.path}>{shorten(data.path)}</span>
+        <button className="ghost tiny" onClick={onType}>type</button>
+      </div>
+      <div className="entries">
+        {data.entries.length === 0 && <div className="note">no folders here</div>}
+        {data.entries.map((entry) => (
+          <div className="entry" key={entry.path}>
+            <button className="name" onClick={() => setAt(entry.path)}>
+              {entry.is_repo ? '◆' : '▸'} {entry.name}
+            </button>
+            {entry.is_repo && (
+              <button className="tiny primary" onClick={() => onPick(entry.path)}>add</button>
+            )}
+          </div>
+        ))}
+      </div>
+    </div>
   )
 }
