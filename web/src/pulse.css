@@ -1,0 +1,28 @@
+/* Deliberately not the app stylesheet: this window is 360x58 and transparent. */
+:root { color-scheme: dark; }
+html, body, #root { height: 100%; margin: 0; background: transparent; }
+body { font: 12.5px/1 -apple-system, "SF Pro Text", system-ui, sans-serif; -webkit-font-smoothing: antialiased; }
+
+.pulse {
+  -webkit-app-region: drag;
+  display: flex; align-items: center; gap: 9px;
+  height: 100%;
+  margin: 6px 10px;
+  padding: 0 15px;
+  border-radius: 999px;
+  background: #0E1118F2;
+  border: 1px solid #262D3C;
+  color: #E8ECF3;
+  box-shadow: 0 8px 22px -8px #000000B0;
+  backdrop-filter: blur(16px);
+}
+.pulse .dot { width: 7px; height: 7px; border-radius: 50%; flex: none; }
+.pulse .label { font-weight: 550; letter-spacing: -.01em; }
+.pulse .sub { color: #646E80; }
+
+.pulse.run  .dot { background: #45C8E8; box-shadow: 0 0 0 3px #45C8E826; animation: breathe 1.5s ease-in-out infinite; }
+.pulse.wait .dot { background: #6E8BFF; box-shadow: 0 0 0 3px #6E8BFF26; }
+.pulse.idle .dot { background: #646E80; }
+.pulse.idle { opacity: .6; }
+
+@keyframes breathe { 0%,100% { opacity: 1 } 50% { opacity: .35 } }

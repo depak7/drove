@@ -98,31 +98,51 @@ export function Plan({ plan }) {
   )
 }
 
-/** The gate. The one decision the product asks of you, so it gets the accent. */
+/**
+ * The gate: the one decision the product asks of you.
+ *
+ * Pinned to the bottom of the pane rather than placed after the plan. A plan runs to several
+ * screens — approach, steps, criteria, risks — and burying the only action under all of it means
+ * the thing the product exists to ask never stays in view.
+ */
 export function Gate({ busy, onApprove, onDecline, onRevise }) {
   const [feedback, setFeedback] = useState('')
+  const [open, setOpen] = useState(false)
+
   const send = () => {
     const text = feedback.trim()
     if (!text) return
     setFeedback('')
+    setOpen(false)
     onRevise(text)
   }
+
   return (
-    <div className="card gate">
-      <h3 className="eyebrow">Your call</h3>
-      <textarea
-        rows={2}
-        placeholder="Type feedback to revise — “use a token bucket, skip the middleware”"
-        value={feedback}
-        disabled={busy}
-        onChange={(e) => setFeedback(e.target.value)}
-        onKeyDown={(e) => { if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) send() }}
-      />
+    <div className="gatebar">
+      {open && (
+        <textarea
+          autoFocus
+          rows={2}
+          placeholder="What should change? — “use a token bucket, skip the middleware”"
+          value={feedback}
+          disabled={busy}
+          onChange={(e) => setFeedback(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) send()
+            if (e.key === 'Escape') setOpen(false)
+          }}
+        />
+      )}
       <div className="row">
-        <button className="primary" disabled={busy} onClick={onApprove}>Approve &amp; run</button>
-        <button disabled={busy || !feedback.trim()} onClick={send}>Revise plan</button>
+        <span className="eyebrow">Your call</span>
         <span className="grow" />
         <button className="ghost danger" disabled={busy} onClick={onDecline}>Discard</button>
+        {open ? (
+          <button disabled={busy || !feedback.trim()} onClick={send}>Send feedback</button>
+        ) : (
+          <button disabled={busy} onClick={() => setOpen(true)}>Revise…</button>
+        )}
+        <button className="primary" disabled={busy} onClick={onApprove}>Approve &amp; run</button>
       </div>
     </div>
   )

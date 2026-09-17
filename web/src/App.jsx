@@ -3,6 +3,7 @@ import { api } from './api'
 import { useStream } from './useStream'
 import { Diff, Gate, Log, Pill, Plan, Rail, StageLegend } from './components'
 import { Overview, WorkspaceBar } from './Workspaces'
+import { isDesktop, notify, setPulse } from './desktop'
 
 const PIVOTABLE = ['delivered', 'landed', 'needs_human', 'verify_failed', 'no_changes']
 
@@ -30,9 +31,28 @@ export default function App() {
     }
   }, [workspaceId])
 
-  const { connected, logs } = useStream(refresh)
+  const { connected, logs } = useStream(
+    useCallback((event) => {
+      refresh()
+      if (event.kind !== 'status') return
+      // The point of a desktop app is not having to watch it. Only interrupt for the two states
+      // that actually need a person: a plan waiting on approval, and a run that stopped.
+      if (event.status === 'awaiting_approval') notify('Plan ready', 'A feature is waiting on your approval.')
+      if (['needs_human', 'verify_failed', 'failed'].includes(event.status)) {
+        notify('Run stopped', `A feature ended as ${event.status.replace(/_/g, ' ')}.`)
+      }
+    }, [refresh]),
+  )
 
   useEffect(() => { refresh() }, [refresh])
+
+  // Keep the notch pulse in step with what is actually happening.
+  useEffect(() => {
+    if (!isDesktop) return
+    const running = features.filter((f) => f.busy).length
+    const waiting = features.filter((f) => f.status === 'awaiting_approval').length
+    setPulse({ running, waiting })
+  }, [features])
   useEffect(() => { if (workspaceId) localStorage.setItem('vorflux.workspace', workspaceId) }, [workspaceId])
 
   const workspace = workspaces.find((w) => w.id === workspaceId) ?? null
@@ -169,7 +189,7 @@ export default function App() {
           )}
 
           {current && (
-            <div className="main-inner">
+            <div className={`main-inner ${current.status === 'awaiting_approval' ? 'gated' : ''}`}>
               <div className="dhead">
                 <h2>{current.title}</h2>
               </div>

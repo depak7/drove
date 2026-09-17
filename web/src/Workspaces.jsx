@@ -1,4 +1,5 @@
 import { useState } from 'react'
+import { chooseRepository, isDesktop } from './desktop'
 
 /** Workspace picker plus repo chips — this is how a repo gets added, from the app. */
 export function WorkspaceBar({ workspaces, current, onSelect, onCreate, onAddRepo, onRemoveRepo }) {
@@ -40,7 +41,19 @@ export function WorkspaceBar({ workspaces, current, onSelect, onCreate, onAddRep
               <span className="x" onClick={() => onRemoveRepo(repo.path)} title="Remove">×</span>
             </span>
           ))}
-          <span className="chip add" onClick={() => { setMode(mode === 'repo' ? null : 'repo'); setValue('') }}>
+          <span
+            className="chip add"
+            onClick={async () => {
+              // On the desktop, never make someone type a filesystem path.
+              if (isDesktop) {
+                const picked = await chooseRepository()
+                if (picked) onAddRepo(picked)
+                return
+              }
+              setMode(mode === 'repo' ? null : 'repo')
+              setValue('')
+            }}
+          >
             + repo
           </span>
         </div>
@@ -97,13 +110,9 @@ export function Overview({ workspace, features, onPick }) {
         <div className="card">
           <h3 className="eyebrow">Waiting on your approval</h3>
           {waiting.map((f) => (
-            <button
-              key={f.id}
-              className="frow"
-              onClick={() => onPick(f.id)}
-              style={{ padding: '9px 0', borderColor: 'transparent' }}
-            >
-              <div className="title">{f.title}</div>
+            <button key={f.id} className="picker" onClick={() => onPick(f.id)}>
+              <span style={{ flex: 1 }}>{f.title}</span>
+              <span className="go">→</span>
             </button>
           ))}
         </div>

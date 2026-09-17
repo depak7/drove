@@ -1,10 +1,12 @@
 import { app, ipcMain, dialog, Notification, BrowserWindow } from "electron";
 import { spawn } from "node:child_process";
+import { existsSync } from "node:fs";
 import { join } from "node:path";
 import __cjs_mod__ from "node:module";
 const __filename = import.meta.filename;
 const __dirname = import.meta.dirname;
 const require2 = __cjs_mod__.createRequire(import.meta.url);
+const PRELOAD = ["../preload/index.mjs", "../preload/index.js"].map((rel) => join(__dirname, rel)).find(existsSync) ?? join(__dirname, "../preload/index.mjs");
 let mainWindow;
 let pulseWindow;
 let engine;
@@ -27,9 +29,13 @@ function createPulse() {
     alwaysOnTop: true,
     skipTaskbar: true,
     type: "panel",
-    webPreferences: { preload: join(__dirname, "../preload/index.js"), contextIsolation: true, nodeIntegration: false }
+    webPreferences: { preload: PRELOAD, contextIsolation: true, nodeIntegration: false }
   });
-  pulseWindow.loadURL(`${process.env.ELECTRON_RENDERER_URL || "http://localhost:5173"}?pulse=1`);
+  if (process.env.ELECTRON_RENDERER_URL) {
+    pulseWindow.loadURL(`${process.env.ELECTRON_RENDERER_URL}?pulse=1`);
+  } else {
+    pulseWindow.loadFile(join(__dirname, "../renderer/index.html"), { search: "pulse=1" });
+  }
 }
 function createWindow() {
   mainWindow = new BrowserWindow({
@@ -40,9 +46,13 @@ function createWindow() {
     titleBarStyle: "hiddenInset",
     vibrancy: "under-window",
     backgroundColor: "#0a0d12",
-    webPreferences: { preload: join(__dirname, "../preload/index.js"), contextIsolation: true, nodeIntegration: false }
+    webPreferences: { preload: PRELOAD, contextIsolation: true, nodeIntegration: false }
   });
-  mainWindow.loadURL(process.env.ELECTRON_RENDERER_URL || "http://localhost:5173");
+  if (process.env.ELECTRON_RENDERER_URL) {
+    mainWindow.loadURL(process.env.ELECTRON_RENDERER_URL);
+  } else {
+    mainWindow.loadFile(join(__dirname, "../renderer/index.html"));
+  }
 }
 app.whenReady().then(() => {
   startEngine();
@@ -54,12 +64,17 @@ app.whenReady().then(() => {
   ipcMain.on("pulse:update", (_, state) => {
     if (!pulseWindow) return;
     pulseWindow.webContents.send("pulse:state", state);
-    if (state?.state === "idle") pulseWindow.hide();
-    else pulseWindow.showInactive();
+    const busy = (state?.running ?? 0) > 0 || (state?.waiting ?? 0) > 0;
+    if (busy) pulseWindow.showInactive();
+    else pulseWindow.hide();
   });
   createWindow();
   createPulse();
 });
 app.on("before-quit", () => engine?.kill());
+app.on("activate", () => {
+  if (BrowserWindow.getAllWindows().length === 0) createWindow();
+});
 app.on("window-all-closed", () => {
+  if (process.platform !== "darwin") app.quit();
 });
