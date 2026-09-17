@@ -63,7 +63,13 @@ class ClaudeCodeHarness:
             floor = 2 if spec.output_schema is not None else 1
             argv += ["--max-turns", str(max(spec.max_turns, floor))]
 
-        argv.append(spec.prompt)
+        # `--` terminates option parsing. Without it a variadic flag eats the prompt:
+        # `--add-dir /path "do the thing"` treats the prompt as a second directory and claude
+        # exits with "Input must be provided either through stdin or as a prompt argument".
+        # Both --add-dir and --disallowed-tools are variadic, so this is not optional. (Planning
+        # only ever worked because --json-schema happened to sit between them and the prompt and
+        # terminated the list by accident.)
+        argv += ["--", spec.prompt]
         return argv
 
     def parse(self, p: dict[str, Any]) -> list[HarnessEvent]:

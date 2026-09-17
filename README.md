@@ -15,7 +15,20 @@ The point is **cross-model review**: the harness that wrote the code never grade
 
 ```bash
 uv tool install git+https://github.com/<you>/vorflux-local
-cd ~/my-repo && vorflux init && vorflux doctor && vorflux serve
+cd ~/my-repo && vorflux init && vorflux doctor
 ```
+
+## Use
+
+```bash
+vorflux plan "add rate limiting to the API"   # plan, then approve / decline / type feedback
+vorflux execute <feature>                     # implement it on an isolated worktree branch
+vorflux features                              # what exists and where it got to
+vorflux pivot <feature> "use a token bucket"  # change direction; keeps the branch and the agent's memory
+```
+
+Each feature gets its own git worktree under `~/.vorflux/worktrees/`, so runs never collide and
+your own checkout is never touched. A worktree is only ever removed once its commits are in the
+base branch — unintegrated work is preserved and the recovery command printed.
 
 Status: M0 — pipeline spine, Claude adapter, plan stage.

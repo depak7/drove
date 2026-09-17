@@ -51,15 +51,19 @@ class OpenCodeHarness:
         )
 
     def build_argv(self, spec: InvokeSpec) -> list[str]:
-        argv = [self.binary, "run", "--format", "json", "--dir", str(spec.cwd)]
-        if spec.model:
-            argv += ["-m", spec.model]
-        if spec.session_id and spec.resume:
-            argv += ["--session", spec.session_id]
+        argv = [self.binary, "run", "--format", "json"]
         if spec.mode == "write":
             # opencode exposes no read-only sandbox, so --auto is only ever granted for stages
             # that are meant to write. Read-only stages simply get no approval grant.
             argv.append("--auto")
+        if spec.model:
+            argv += ["-m", spec.model]
+        if spec.session_id and spec.resume:
+            argv += ["--session", spec.session_id]
+        # Value-taking options go last so no bare flag ever sits next to the prompt. --auto is
+        # boolean and yargs would not consume the positional, but "this flag happens to be
+        # boolean" is precisely the assumption that let a variadic flag eat claude's prompt.
+        argv += ["--dir", str(spec.cwd)]
         argv.append(self.prompt_for(spec))
         return argv
 

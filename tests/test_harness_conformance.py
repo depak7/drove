@@ -30,12 +30,26 @@ def test_preset_is_well_formed(name):
 
 
 @pytest.mark.parametrize("name", NAMES)
-def test_prompt_is_always_the_final_argument(name):
-    """Every CLI takes the prompt as a trailing positional; a flag after it would be swallowed."""
+@pytest.mark.parametrize("mode", ["readonly", "write"])
+def test_prompt_survives_argv_construction(name, mode):
+    """The prompt must be the trailing positional AND reachable by the CLI's parser.
+
+    Position alone is not enough: a variadic option immediately before it (claude's --add-dir,
+    --disallowed-tools) consumes it as another value. Any adapter using variadic flags has to
+    terminate options with `--`.
+    """
     harness = registry.get(name)
-    spec = InvokeSpec(prompt="THE-PROMPT", cwd=Path("/repo"))
-    argv = harness.build_argv(spec)
+    argv = harness.build_argv(
+        InvokeSpec(prompt="THE-PROMPT", cwd=Path("/repo"), mode=mode, extra_dirs=[Path("/w")])
+    )
     assert argv[-1].startswith("THE-PROMPT"), argv
+
+    preceding = argv[-2] if len(argv) > 1 else ""
+    if preceding != "--":
+        assert not preceding.startswith("-"), (
+            f"{name}: prompt directly follows option {preceding!r} with no `--` terminator; "
+            "if that option is variadic the prompt will be swallowed"
+        )
 
 
 @pytest.mark.parametrize("name", NAMES)

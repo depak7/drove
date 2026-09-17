@@ -9,11 +9,14 @@ from pathlib import Path
 
 import typer
 
-from vorflux import __version__
+from vorflux import __version__, db, ui
 from vorflux.config import HOME, REPO_CONFIG, TEMPLATE, RepoConfig
-from vorflux.events import AssistantText, HarnessEvent, RateLimit, Result, ToolCall
 from vorflux.harness import registry
+from vorflux.pipeline.schemas import PlanDoc
+from vorflux.pipeline.stages.execute import StageError as ExecuteError
+from vorflux.pipeline.stages.execute import run_execute
 from vorflux.pipeline.stages.plan import StageError, run_plan
+from vorflux.vcs import git, worktree
 
 app = typer.Typer(
     add_completion=False,
@@ -117,76 +120,278 @@ def doctor() -> None:
         typer.secho(f"  cross-model review available: {', '.join(usable)}", fg=typer.colors.GREEN)
 
 
-@app.command(name="run")
-def run_cmd(
-    task: str = typer.Argument(..., help="What you want built"),
-    repo: Path = typer.Option(Path("."), "--repo", "-C", help="Repository root"),
-    stage: str = typer.Option("plan", "--stage", help="Stage to run (plan)"),
-    as_json: bool = typer.Option(False, "--json", help="Emit the raw stage object"),
-) -> None:
-    """Run a single pipeline stage. M0 implements `plan`."""
-    if stage != "plan":
-        _err(f"stage {stage!r} not implemented yet (M0 ships `plan`)")
-        raise typer.Exit(2)
-
+def _open_repo(repo: Path) -> tuple[Path, RepoConfig]:
     repo = repo.resolve()
-    if not (repo / ".git").exists():
+    if not git.is_repo(repo):
         _err(f"{repo} is not a git repository")
         raise typer.Exit(1)
+    return repo, RepoConfig.load(repo)
 
-    cfg = RepoConfig.load(repo)
 
-    def show(event: HarnessEvent) -> None:
-        if as_json:
-            return
-        if isinstance(event, ToolCall):
-            hint = event.input.get("file_path") or event.input.get("pattern") or ""
-            typer.secho(
-                f"  · {event.name} {str(hint)[:70]}",
-                fg=typer.colors.BRIGHT_BLACK,
-                err=True,
+def _plan_loop(
+    task: str,
+    cfg: RepoConfig,
+    wt,
+    run_id: str,
+    feature_id: str,
+    yes: bool,
+) -> bool:
+    """Plan, then approve / decline / revise. Returns True once a plan is approved.
+
+    A revision resumes the planner's session: it already spent real tokens reading the codebase,
+    and "use PKCE instead" should adjust that understanding rather than rebuild it.
+    """
+    session: str | None = None
+    feedback: str | None = None
+
+    while True:
+        try:
+            outcome = asyncio.run(
+                run_plan(
+                    task,
+                    cfg,
+                    run_id=run_id,
+                    on_event=ui.stream_line,
+                    cwd=wt.path,
+                    resume_session=session,
+                    feedback=feedback,
+                )
             )
-        elif isinstance(event, AssistantText):
-            typer.secho(f"  {event.text.strip()[:200]}", fg=typer.colors.BRIGHT_BLACK, err=True)
-        elif isinstance(event, RateLimit) and (event.five_hour_utilization or 0) > 0.8:
-            typer.secho(
-                f"  ! 5h window {event.five_hour_utilization:.0%} used",
-                fg=typer.colors.YELLOW,
-                err=True,
+        except (StageError, KeyError) as exc:
+            _err(str(exc))
+            raise typer.Exit(1) from exc
+
+        session = outcome.session_id
+        ui.render_plan(outcome.plan)
+
+        with db.connect() as conn:
+            db.set_run_plan(conn, run_id, outcome.plan.model_dump())
+            db.record_session(
+                conn, run_id, "plan", cfg.harness["plan"], session, wt.path,
+                tokens_in=outcome.tokens_in, tokens_out=outcome.tokens_out,
+                cost_usd=outcome.cost_usd,
             )
-        elif isinstance(event, Result) and event.cost_usd:
-            typer.secho(f"  ${event.cost_usd:.4f}", fg=typer.colors.BRIGHT_BLACK, err=True)
+
+        if yes:
+            return True
+
+        answer = typer.prompt("[a]pprove  [d]ecline  or type feedback", default="a").strip()
+        if answer.lower() in ("a", "approve", "y", "yes"):
+            return True
+        if answer.lower() in ("d", "decline", "n", "no", "q"):
+            return False
+        feedback = answer
+
+
+@app.command(name="plan")
+def plan_cmd(
+    task: str = typer.Argument(..., help="What you want built"),
+    repo: Path = typer.Option(Path("."), "--repo", "-C", help="Repository root"),
+    yes: bool = typer.Option(False, "--yes", "-y", help="Approve the first plan without asking"),
+) -> None:
+    """Plan a new feature, iterate on it, then approve it to run."""
+    repo, cfg = _open_repo(repo)
+    worktree.prune(repo)
+
+    feature_id = db.new_id()
+    wt = worktree.create(repo, feature_id, cfg.base_branch)
+    with db.connect() as conn:
+        db.create_feature(
+            conn, repo, task, wt.branch, wt.path, cfg.base_branch, feature_id=feature_id
+        )
+        run_id, _ = db.create_run(conn, feature_id, task)
+
+    typer.secho(f"feature {feature_id}  branch {wt.branch}", fg=ui.DIM)
+    typer.secho(f"worktree {wt.path}", fg=ui.DIM)
+
+    if not _plan_loop(task, cfg, wt, run_id, feature_id, yes):
+        result = worktree.teardown(wt)
+        with db.connect() as conn:
+            db.finish_run(conn, run_id, "declined")
+            if result.removed:
+                db.delete_feature(conn, feature_id)
+            else:
+                db.set_feature_status(conn, feature_id, "abandoned")
+        typer.secho(
+            "declined — worktree removed" if result.removed
+            else f"declined — worktree kept: {result.reason}",
+            fg=typer.colors.YELLOW,
+        )
+        raise typer.Exit(0)
+
+    with db.connect() as conn:
+        db.set_feature_status(conn, feature_id, "approved")
+    typer.secho(f"approved — run it with:  vorflux execute {feature_id}", fg=typer.colors.GREEN)
+
+
+@app.command(name="pivot")
+def pivot_cmd(
+    feature: str = typer.Argument(..., help="Feature id or branch"),
+    intent: str = typer.Argument(..., help="What to change about it"),
+    repo: Path = typer.Option(Path("."), "--repo", "-C", help="Repository root"),
+    yes: bool = typer.Option(False, "--yes", "-y", help="Approve the first plan without asking"),
+) -> None:
+    """Change direction on an existing feature.
+
+    Delivered is a resting state, not a terminal one. A pivot plans against the feature's own
+    worktree — so the planner sees what was already built, not just the base branch — and appends
+    another run to the same branch. The executor session carries over, so the agent still knows
+    why it built things the way it did.
+    """
+    repo, cfg = _open_repo(repo)
+
+    with db.connect() as conn:
+        row = db.find_feature(conn, feature)
+        if row is None:
+            _err(f"no feature matching {feature!r}")
+            raise typer.Exit(1)
+        feature_id = row["id"]
+
+    wt = worktree.create(repo, feature_id, row["base_branch"])
+    _check_drift(wt, yes)
+
+    with db.connect() as conn:
+        run_id, iteration = db.create_run(conn, feature_id, intent)
+        db.set_feature_status(conn, feature_id, "planning")
+
+    typer.secho(f"feature {feature_id}  iteration {iteration}  branch {wt.branch}", fg=ui.DIM)
+
+    if not _plan_loop(intent, cfg, wt, run_id, feature_id, yes):
+        # Never tear down on a declined pivot: earlier iterations' work is on this branch.
+        with db.connect() as conn:
+            db.finish_run(conn, run_id, "declined")
+            db.set_feature_status(conn, feature_id, "executed")
+        typer.secho("declined — earlier work left untouched", fg=typer.colors.YELLOW)
+        raise typer.Exit(0)
+
+    with db.connect() as conn:
+        db.set_feature_status(conn, feature_id, "approved")
+    typer.secho(f"approved — run it with:  vorflux execute {feature_id}", fg=typer.colors.GREEN)
+
+
+def _check_drift(wt, assume_ignore: bool = False) -> None:
+    """Surface base drift and let the user decide. Never rebase silently.
+
+    An unattended rebase that hits conflicts mid-automation is a bad failure to discover later.
+    """
+    behind = worktree.drift(wt)
+    if not behind:
+        return
+    typer.secho(
+        f"  ! {wt.base} has advanced {behind} commit(s) since this feature branched",
+        fg=typer.colors.YELLOW,
+    )
+    if assume_ignore:
+        return
+    choice = typer.prompt(
+        "  [r]ebase onto it  [m]erge it in  [i]gnore", default="i"
+    ).strip().lower()
+    if choice.startswith("r"):
+        git.git(wt.path, "rebase", wt.base)
+        typer.secho(f"  rebased onto {wt.base}", fg=typer.colors.GREEN)
+    elif choice.startswith("m"):
+        git.git(wt.path, "merge", "--no-edit", wt.base)
+        typer.secho(f"  merged {wt.base}", fg=typer.colors.GREEN)
+
+
+@app.command(name="execute")
+def execute_cmd(
+    feature: str = typer.Argument(..., help="Feature id or branch"),
+    repo: Path = typer.Option(Path("."), "--repo", "-C", help="Repository root"),
+) -> None:
+    """Implement a feature's approved plan on its branch."""
+    repo, cfg = _open_repo(repo)
+
+    with db.connect() as conn:
+        row = db.find_feature(conn, feature)
+        if row is None:
+            _err(f"no feature matching {feature!r}")
+            raise typer.Exit(1)
+        runs = db.list_runs(conn, row["id"])
+        prior = db.last_session(conn, row["id"], "execute")
+
+    latest = next((r for r in reversed(runs) if r["plan_json"]), None)
+    if latest is None:
+        _err("that feature has no approved plan yet — run `vorflux plan` first")
+        raise typer.Exit(1)
+
+    plan = PlanDoc.model_validate(json.loads(latest["plan_json"]))
+    wt = worktree.create(repo, row["id"], row["base_branch"])
+
+    _check_drift(wt, assume_ignore=True)
+
+    resume = prior["session_id"] if prior else None
+    if resume:
+        typer.secho(f"  resuming executor session {resume[:8]}", fg=ui.DIM)
+
+    with db.connect() as conn:
+        db.set_feature_status(conn, row["id"], "executing")
 
     try:
-        outcome = asyncio.run(run_plan(task, cfg, on_event=show))
-    except (StageError, KeyError) as exc:
+        outcome = asyncio.run(
+            run_execute(
+                plan,
+                wt,
+                cfg,
+                latest["id"],
+                # The RUN's intent, not the feature title: on a pivot those differ, and a
+                # second commit reading "Add divide()" tells a reviewer nothing about
+                # what changed.
+                latest["intent"],
+                resume_session=resume,
+                on_event=ui.stream_line,
+            )
+        )
+    except (StageError, ExecuteError, KeyError) as exc:
+        with db.connect() as conn:
+            db.finish_run(conn, latest["id"], "failed")
+            db.set_feature_status(conn, row["id"], "failed")
         _err(str(exc))
         raise typer.Exit(1) from exc
 
-    if as_json:
-        typer.echo(json.dumps(outcome.plan.model_dump(), indent=2))
-        return
+    with db.connect() as conn:
+        db.record_session(
+            conn, latest["id"], "execute", cfg.harness["execute"], outcome.session_id, wt.path,
+            tokens_in=outcome.tokens_in, tokens_out=outcome.tokens_out, cost_usd=outcome.cost_usd,
+        )
+        db.finish_run(conn, latest["id"], "executed", head_sha=outcome.head_sha)
+        db.set_feature_status(conn, row["id"], "executed")
 
-    p = outcome.plan
     typer.echo("")
-    typer.secho(p.summary, bold=True)
-    if p.steps:
-        typer.echo("\nSteps")
-        for i, step in enumerate(p.steps, 1):
-            typer.echo(f"  {i}. {step.title}")
-            for f in step.files:
-                typer.secho(f"       {f}", fg=typer.colors.BRIGHT_BLACK)
-    if p.acceptance_criteria:
-        typer.echo("\nDone when")
-        for c in p.acceptance_criteria:
-            typer.echo(f"  - {c}")
-    if p.risks:
-        typer.echo("\nRisks")
-        for r in p.risks:
-            typer.secho(f"  ! {r}", fg=typer.colors.YELLOW)
-    if p.test_plan:
-        typer.echo(f"\nVerify\n  {p.test_plan}")
-    typer.secho(f"\nlog: {outcome.raw_log}", fg=typer.colors.BRIGHT_BLACK)
+    if outcome.committed:
+        sha = (outcome.head_sha or "")[:8]
+        typer.secho(f"committed {sha} on {wt.branch}", fg=typer.colors.GREEN)
+    else:
+        typer.secho("no changes were made", fg=typer.colors.YELLOW)
+    typer.secho(f"  diff:  git -C {repo} diff {row['base_branch']}..{wt.branch}", fg=ui.DIM)
+    typer.secho(f"  tree:  {wt.path}", fg=ui.DIM)
+
+
+@app.command(name="features")
+def features_cmd(
+    repo: Path = typer.Option(Path("."), "--repo", "-C", help="Repository root"),
+    all_repos: bool = typer.Option(False, "--all", help="Every repo, not just this one"),
+) -> None:
+    """List features and their state."""
+    target = None if all_repos else Path(repo).resolve()
+    with db.connect() as conn:
+        rows = db.list_features(conn, target)
+        if not rows:
+            typer.secho("no features yet — start with `vorflux plan \"...\"`", fg=ui.DIM)
+            return
+        for row in rows:
+            runs = db.list_runs(conn, row["id"])
+            status = row["status"]
+            colour = {
+                "executed": typer.colors.GREEN,
+                "failed": typer.colors.RED,
+                "abandoned": typer.colors.YELLOW,
+            }.get(status, typer.colors.WHITE)
+            typer.secho(f"  {row['id']}  {status:<10}", fg=colour, nl=False)
+            typer.echo(f"{row['title'][:56]}")
+            typer.secho(
+                f"        {row['branch']}  ·  {len(runs)} run(s)", fg=ui.DIM
+            )
 
 
 @app.command()

@@ -30,13 +30,24 @@ class PlanOutcome:
     session_id: str
     cost_usd: float | None
     raw_log: Path
+    tokens_in: int = 0
+    tokens_out: int = 0
 
 
-def render_prompt(task: str, cfg: RepoConfig) -> str:
-    template = (
-        resources.files("vorflux.pipeline.prompts").joinpath("plan.md").read_text(encoding="utf-8")
+def _template(name: str) -> str:
+    return (
+        resources.files("vorflux.pipeline.prompts").joinpath(name).read_text(encoding="utf-8")
     )
-    return template.format(repo=cfg.root, base_branch=cfg.base_branch, task=task)
+
+
+def render_prompt(task: str, cfg: RepoConfig, cwd: Path | None = None) -> str:
+    return _template("plan.md").format(
+        repo=cwd or cfg.root, base_branch=cfg.base_branch, task=task
+    )
+
+
+def render_revision(feedback: str) -> str:
+    return _template("plan_revise.md").format(feedback=feedback)
 
 
 async def run_plan(
@@ -44,18 +55,37 @@ async def run_plan(
     cfg: RepoConfig,
     run_id: str | None = None,
     on_event: Callable[[HarnessEvent], None] | None = None,
+    cwd: Path | None = None,
+    resume_session: str | None = None,
+    feedback: str | None = None,
 ) -> PlanOutcome:
+    """Produce a plan, or revise one.
+
+    `resume_session` + `feedback` continues an existing planning conversation rather than starting
+    over. That matters: the planner spent real tokens reading the codebase, and a revision like
+    "use PKCE instead" should adjust that understanding, not rebuild it from nothing.
+
+    `cwd` defaults to the repo. A pivot passes the feature's worktree instead, so the planner sees
+    what was already built rather than only the base branch.
+    """
     run_id = run_id or uuid.uuid4().hex[:12]
-    session_id = str(uuid.uuid4())
+    session_id = resume_session or str(uuid.uuid4())
     raw_log = runs_dir(run_id) / "plan.jsonl"
+    cwd = cwd or cfg.root
+
+    if feedback and resume_session:
+        prompt = render_revision(feedback)
+    else:
+        prompt = render_prompt(task, cfg, cwd)
 
     harness = registry.get(cfg.harness["plan"])
     spec = InvokeSpec(
-        prompt=render_prompt(task, cfg),
-        cwd=cfg.root,
+        prompt=prompt,
+        cwd=cwd,
         mode="readonly",
         output_schema=json_schema(PlanDoc),
         session_id=session_id,
+        resume=bool(resume_session),
         raw_log=raw_log,
     )
 
@@ -86,4 +116,6 @@ async def run_plan(
         session_id=result.session_id or session_id,
         cost_usd=result.cost_usd,
         raw_log=raw_log,
+        tokens_in=result.tokens_in,
+        tokens_out=result.tokens_out,
     )

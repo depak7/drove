@@ -114,3 +114,22 @@ def test_session_id_is_assigned_not_resumed_by_default():
 
     resumed = ClaudeCodeHarness().build_argv(spec(session_id="abc", resume=True))
     assert "--resume" in resumed and "--session-id" not in resumed
+
+
+def test_prompt_is_protected_from_variadic_flags():
+    """`--add-dir` and `--disallowed-tools` are variadic and will eat the prompt.
+
+    Without a `--` terminator, `--add-dir /path "do the thing"` reads the prompt as a second
+    directory and claude exits: "Input must be provided either through stdin or as a prompt
+    argument when using --print". Planning survived this only by accident — `--json-schema` sat
+    between the variadic flag and the prompt and ended the list. Execute had no schema, so it
+    broke the moment it first ran.
+    """
+    for kwargs in (
+        {"mode": "readonly"},                          # --disallowed-tools
+        {"mode": "write", "extra_dirs": [Path("/w")]},  # --add-dir
+        {"mode": "readonly", "extra_dirs": [Path("/w")]},
+    ):
+        argv = ClaudeCodeHarness().build_argv(spec(**kwargs))
+        assert argv[-2] == "--", f"prompt not shielded: {argv}"
+        assert argv[-1] == "do the thing"
