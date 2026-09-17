@@ -118,3 +118,43 @@ def test_result_carries_token_totals_but_never_a_guessed_cost(name):
     assert result.tokens_in == 0 and result.tokens_out == 0
     assert result.cost_usd is None
     assert not hasattr(result, "cost_is_estimate")
+
+
+# --- stream reading ---------------------------------------------------------------------
+
+async def test_a_line_larger_than_the_stream_buffer_does_not_kill_the_run(tmp_path):
+    """asyncio's readline() dies past 64 KiB with "chunk is longer than limit".
+
+    Harness output blows past that routinely — a codex command_execution carrying a long
+    aggregated_output, or a tool result holding a whole file — and it killed real runs mid-execute.
+    """
+    import json as _json
+
+    from drove.harness.base import stream_jsonl_process
+
+    payload = _json.dumps({"type": "assistant", "text": "x" * 900_000})
+    file = tmp_path / "big.jsonl"
+    file.write_text(payload + "\n" + _json.dumps({"type": "turn.completed"}) + "\n")
+
+    seen = [
+        event
+        async for event in stream_jsonl_process(
+            ["cat", str(file)], tmp_path, lambda p: [p.get("type")]
+        )
+    ]
+    assert seen == ["assistant", "turn.completed"]
+
+
+async def test_a_process_dying_mid_line_still_yields_what_it_wrote(tmp_path):
+    from drove.harness.base import stream_jsonl_process
+
+    file = tmp_path / "partial.jsonl"
+    file.write_text('{"type":"a"}\n{"type":"b"}')  # no trailing newline
+
+    seen = [
+        event
+        async for event in stream_jsonl_process(
+            ["cat", str(file)], tmp_path, lambda p: [p.get("type")]
+        )
+    ]
+    assert seen == ["a", "b"], "the final unterminated line must not be dropped"

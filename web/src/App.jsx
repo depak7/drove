@@ -401,6 +401,19 @@ function FirstRun({ onCreate }) {
 function Detail({ feature, logs, replay, connected, tab, setTab, diff, evidence, onBack, act, onDiscard }) {
   const gated = feature.status === 'awaiting_approval'
   const stopped = !gated && Boolean(NEEDS_YOU[feature.status])
+
+  // Only offer a tab when there is something behind it. An empty panel reads as broken; a tab
+  // that is simply absent reads as "this run has not got there yet", which is the truth.
+  const has = feature.has ?? {}
+  const tabs = ['plan', 'live', 'diff', 'evidence'].filter((name) => {
+    if (name === 'plan') return Boolean(feature.plan)
+    if (name === 'live') return logs.length > 0 || has.log
+    return has[name]
+  })
+
+  useEffect(() => {
+    if (tabs.length && !tabs.includes(tab)) setTab(tabs[0])
+  }, [tabs.join(), tab])
   return (
     <div className={`stage-inner wide ${gated || stopped ? 'gated' : ''}`}>
       <button className="back" onClick={onBack}>← all features</button>
@@ -421,7 +434,7 @@ function Detail({ feature, logs, replay, connected, tab, setTab, diff, evidence,
       </div>
 
       <div className="tabs">
-        {['plan', 'live', 'diff', 'evidence'].map((name) => (
+        {tabs.map((name) => (
           <button key={name} className={tab === name ? 'on' : ''} onClick={() => setTab(name)}>
             {name}
             {name === 'live' && logs.length > 0 && <span className="count">{logs.length}</span>}
@@ -456,13 +469,7 @@ function Detail({ feature, logs, replay, connected, tab, setTab, diff, evidence,
       )}
       {tab === 'live' && <Log lines={logs} replay={replay} connected={connected} />}
       {tab === 'diff' && <Diff text={diff?.diff} repos={diff?.repos} />}
-      {tab === 'evidence' && (
-        evidence
-          ? <pre className="block">{evidence}</pre>
-          : <div className="card"><p style={{ color: 'var(--text-3)' }}>
-              No evidence pack yet — one is written when a run finishes.
-            </p></div>
-      )}
+      {tab === 'evidence' && <pre className="block">{evidence}</pre>}
     </div>
   )
 }

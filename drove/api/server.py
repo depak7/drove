@@ -131,6 +131,21 @@ def _feature_json(conn, row) -> dict[str, Any]:
         # Why the most recent run stopped, so a failure survives a page reload.
         "error": runs[-1]["error"] if runs else None,
         "latest_run_id": runs[-1]["id"] if runs else None,
+        # What there is to look at. A tab that opens onto "nothing here yet" is a tab that should
+        # not have been offered.
+        "has": _available(row, runs),
+    }
+
+
+def _available(row, runs) -> dict[str, bool]:
+    latest = runs[-1] if runs else None
+    run_dir = runs_dir(latest["id"]) if latest else None
+    return {
+        "plan": any(r["plan_json"] for r in runs),
+        "log": bool(run_dir and run_dir.is_dir() and any(run_dir.glob("*.jsonl"))),
+        # Something was committed, so there is a diff to read.
+        "diff": any(r["head_sha"] for r in runs),
+        "evidence": any((runs_dir(r["id"]) / "evidence.md").exists() for r in runs),
     }
 
 

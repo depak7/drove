@@ -48,6 +48,35 @@ class Harness(Protocol):
     def invoke(self, spec: InvokeSpec) -> AsyncIterator[HarnessEvent]: ...
 
 
+# Read in chunks rather than by line. StreamReader.readline() raises
+# "Separator is found, but chunk is longer than limit" once a line exceeds its 64 KiB buffer, and
+# harness output routinely blows past that — a codex command_execution carrying a long
+# aggregated_output, or a tool result holding a whole file. That killed real runs mid-execute.
+_CHUNK = 256 * 1024
+
+
+async def _lines(stream: asyncio.StreamReader) -> AsyncIterator[str]:
+    """Yield newline-delimited text with no limit on how long a line may be."""
+    buffer = bytearray()
+    while True:
+        chunk = await stream.read(_CHUNK)
+        if not chunk:
+            break
+        buffer.extend(chunk)
+        while True:
+            index = buffer.find(b"\n")
+            if index < 0:
+                break
+            line = bytes(buffer[:index])
+            del buffer[: index + 1]
+            text = line.decode("utf-8", errors="replace").strip()
+            if text:
+                yield text
+    # A process that dies mid-line still leaves something worth recording.
+    if tail := bytes(buffer).decode("utf-8", errors="replace").strip():
+        yield tail
+
+
 async def stream_jsonl_process(
     argv: list[str],
     cwd: Path,
@@ -82,10 +111,7 @@ async def stream_jsonl_process(
     assert proc.stdout is not None
 
     try:
-        async for raw in proc.stdout:
-            line = raw.decode("utf-8", errors="replace").strip()
-            if not line:
-                continue
+        async for line in _lines(proc.stdout):
             if log is not None:
                 log.write(line + "\n")
                 log.flush()

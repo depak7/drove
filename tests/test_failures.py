@@ -143,3 +143,34 @@ def test_a_run_with_no_recording_says_so_rather_than_erroring(client):
     feature = approved_feature(client)
     body = client.get(f"/api/features/{feature['id']}/log").json()
     assert body["stages"] == []
+
+
+def test_a_tab_is_only_offered_when_there_is_something_behind_it(client):
+    """An empty panel reads as broken; an absent tab reads as "not there yet", which is true."""
+    from drove.config import runs_dir
+
+    path = make_repo(client.projects, "api")
+    with db.connect() as conn:
+        ws = workspace.create(conn, "product", [path])
+    feature = client.post("/api/features", json={"task": "x", "workspace_id": ws.id}).json()
+
+    fresh = client.get(f"/api/features/{feature['id']}").json()["has"]
+    assert fresh == {"plan": False, "log": False, "diff": False, "evidence": False}
+
+    with db.connect() as conn:
+        run = db.list_runs(conn, feature["id"])[-1]
+        db.set_run_plan(conn, run["id"], PLAN)
+    assert client.get(f"/api/features/{feature['id']}").json()["has"]["plan"] is True
+
+    directory = runs_dir(run["id"])
+    directory.mkdir(parents=True, exist_ok=True)
+    (directory / "execute.jsonl").write_text('{"type":"turn.completed"}\n')
+    assert client.get(f"/api/features/{feature['id']}").json()["has"]["log"] is True
+
+    assert client.get(f"/api/features/{feature['id']}").json()["has"]["diff"] is False
+    with db.connect() as conn:
+        db.finish_run(conn, run["id"], "delivered", head_sha="abc123")
+    assert client.get(f"/api/features/{feature['id']}").json()["has"]["diff"] is True
+
+    (directory / "evidence.md").write_text("# run\n")
+    assert client.get(f"/api/features/{feature['id']}").json()["has"]["evidence"] is True
