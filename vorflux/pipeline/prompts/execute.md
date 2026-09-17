@@ -1,9 +1,16 @@
-Implement the approved plan below. It has been reviewed by a human and is the agreed scope — do
-not redesign it. If something in it turns out to be wrong or impossible, implement everything else
+Implement the approved plan below. A human reviewed and approved it — it is the agreed scope, so
+do not redesign it. If part of it turns out to be wrong or impossible, implement everything else
 and say clearly in your final message what you could not do and why.
 
-The full plan is also written to `.vorflux/plan.md` in this working directory; re-read it whenever
-you need to.
+The plan is also written to `.vorflux/plan.md` here; re-read it whenever you need to.
+
+WORKING DIRECTORY
+You are at {root}. It contains one checked-out repository per directory:
+
+{repos}
+
+Each is an isolated git worktree on branch `{branch}`. Change whichever repos the plan requires —
+a change that alters an interface in one repo and its callers in another belongs in one run.
 
 Repository conventions apply: match the surrounding code's style, reuse what already exists rather
 than adding new abstractions, and do not add dependencies that are not already present.
@@ -12,7 +19,8 @@ PLAN
 {plan}
 
 Rules:
-- Work only inside this directory. It is an isolated git worktree on branch `{branch}`.
+- Work only inside {root}. Do not touch anything outside it.
 - Do NOT run `git commit`, `git push`, `git checkout` or `git merge`. Vorflux commits your work.
 - Do not modify `.vorflux/`.
-- When you are done, state briefly what you changed and anything a reviewer should look at first.
+- When you are done, state briefly what you changed in each repo and what a reviewer should look
+  at first.

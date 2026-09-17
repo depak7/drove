@@ -23,6 +23,7 @@ class Check:
     exit_code: int
     output: str
     duration_s: float
+    repo: str = ""
 
     @property
     def ok(self) -> bool:
@@ -48,7 +49,7 @@ class VerifyOutcome:
         return [c for c in self.checks if not c.ok]
 
 
-def run_verify(cwd: Path, commands: dict[str, str]) -> VerifyOutcome:
+def run_verify(cwd: Path, commands: dict[str, str], repo: str = "") -> VerifyOutcome:
     outcome = VerifyOutcome()
     for name, command in commands.items():
         if not command or not command.strip():
@@ -76,9 +77,29 @@ def run_verify(cwd: Path, commands: dict[str, str]) -> VerifyOutcome:
             Check(
                 name=name,
                 command=command,
+                repo=repo,
                 exit_code=code,
                 output=output[-MAX_OUTPUT:],
                 duration_s=round(time.monotonic() - started, 2),
             )
         )
     return outcome
+
+
+def run_all(trees, workspace) -> VerifyOutcome:
+    """Each repo's own verify commands, run inside that repo's worktree.
+
+    A workspace's repos are separate projects with separate toolchains; running one repo's test
+    command from another's directory is meaningless. Only repos the feature actually touched are
+    checked — re-running an untouched repo's suite proves nothing about this change.
+    """
+    from vorflux.vcs import tree as trees_mod
+
+    combined = VerifyOutcome()
+    for t in trees_mod.touched(trees):
+        commands = t.repo.config.verify
+        if not commands:
+            continue
+        result = run_verify(t.path, commands, repo=t.repo.name)
+        combined.checks.extend(result.checks)
+    return combined

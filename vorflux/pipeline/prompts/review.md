@@ -7,11 +7,14 @@ Your job is to decide whether this change should be merged as it stands.
 THE INTENT THAT WAS APPROVED
 {plan}
 
-THE DIFF ({base}...HEAD on branch {branch})
+REPOSITORIES CHANGED (branch {branch})
+{scope}
+
+THE DIFF
 {diff}
 
-You are in the worktree at {cwd} and may read any file for context, or run
-`git diff {base}...HEAD` for the complete diff if the excerpt above was truncated.
+You are at {cwd}, which holds one checked-out repository per directory. Read any file for context,
+or run `git diff <base>...HEAD` inside a repo for its complete diff if the excerpt was truncated.
 
 Judge on:
 - correctness: does it do what the intent says, and is it right? Trace the actual logic.

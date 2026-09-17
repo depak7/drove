@@ -12,11 +12,22 @@ const post = (url, body) =>
 
 export const api = {
   health: () => fetch('/api/health').then(json),
-  features: () => fetch('/api/features').then(json),
+
+  workspaces: () => fetch('/api/workspaces').then(json),
+  createWorkspace: (name, repos = []) => post('/api/workspaces', { name, repos }),
+  addRepo: (id, path) => post(`/api/workspaces/${id}/repos`, { path }),
+  removeRepo: (id, path) =>
+    fetch(`/api/workspaces/${id}/repos?path=${encodeURIComponent(path)}`, {
+      method: 'DELETE',
+    }).then(json),
+
+  features: (workspaceId) =>
+    fetch(workspaceId ? `/api/features?workspace_id=${workspaceId}` : '/api/features').then(json),
   feature: (id) => fetch(`/api/features/${id}`).then(json),
   diff: (id) => fetch(`/api/features/${id}/diff`).then(json),
   evidence: (id) => fetch(`/api/features/${id}/evidence`).then(json),
-  create: (task) => post('/api/features', { task }),
+  create: (task, workspaceId) =>
+    post('/api/features', { task, workspace_id: workspaceId }),
   revise: (id, feedback) => post(`/api/features/${id}/revise`, { feedback }),
   approve: (id) => post(`/api/features/${id}/approve`),
   decline: (id) => post(`/api/features/${id}/decline`),

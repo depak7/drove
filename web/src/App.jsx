@@ -1,10 +1,15 @@
 import { useCallback, useEffect, useState } from 'react'
 import { api } from './api'
 import { useStream } from './useStream'
-import { Diff, Gate, Log, Pill, Plan, Reviews } from './components'
+import { Diff, Gate, Log, Pill, Plan } from './components'
+import { WorkspaceBar } from './Workspaces'
 
 export default function App() {
   const [health, setHealth] = useState(null)
+  const [workspaces, setWorkspaces] = useState([])
+  const [workspaceId, setWorkspaceId] = useState(
+    () => localStorage.getItem('vorflux.workspace') ?? '',
+  )
   const [features, setFeatures] = useState([])
   const [selected, setSelected] = useState(null)
   const [tab, setTab] = useState('plan')
@@ -15,11 +20,16 @@ export default function App() {
 
   const refresh = useCallback(async () => {
     try {
-      setFeatures(await api.features())
+      const all = await api.workspaces()
+      setWorkspaces(all)
+      // Keep the selection valid: a deleted workspace must not leave the app pointing at nothing.
+      const active = all.find((w) => w.id === workspaceId) ?? all[0]
+      if (active && active.id !== workspaceId) setWorkspaceId(active.id)
+      setFeatures(active ? await api.features(active.id) : [])
     } catch (e) {
       setError(String(e.message ?? e))
     }
-  }, [])
+  }, [workspaceId])
 
   // Any status change on the server is a reason to re-read state, so the list and the detail
   // pane never drift from what actually happened.
@@ -29,6 +39,12 @@ export default function App() {
     api.health().then(setHealth).catch((e) => setError(String(e.message ?? e)))
     refresh()
   }, [refresh])
+
+  useEffect(() => {
+    if (workspaceId) localStorage.setItem('vorflux.workspace', workspaceId)
+  }, [workspaceId])
+
+  const workspace = workspaces.find((w) => w.id === workspaceId) ?? null
 
   const current = features.find((f) => f.id === selected) ?? null
 
@@ -54,7 +70,7 @@ export default function App() {
     if (!text) return
     setTask('')
     act(async () => {
-      const feature = await api.create(text)
+      const feature = await api.create(text, workspaceId)
       setSelected(feature.id)
       setTab('plan')
     })
@@ -64,19 +80,18 @@ export default function App() {
     <div className="app">
       <header>
         <h1>vorflux</h1>
-        <span className="repo mono">{health?.repo ?? ''}</span>
         <span className="spacer" />
-        {health && (
+        {workspace && (
           <span className="repo">
-            {health.stages.execute} implements · {health.stages.review} reviews
+            {workspace.harness.execute} implements · {workspace.harness.review} reviews
           </span>
         )}
         <span className={`dot ${connected ? 'on' : 'off'}`} title={connected ? 'live' : 'reconnecting'} />
       </header>
 
-      {health && !health.independent_review && (
+      {workspace && !workspace.independent_review && (
         <div className="warnbar">
-          {health.stages.execute} is set to review its own work — that is not an independent
+          {workspace.harness.execute} is set to review its own work — that is not an independent
           review. Set a different <code>review</code> harness in <code>.vorflux.toml</code>.
         </div>
       )}
@@ -84,6 +99,18 @@ export default function App() {
 
       <div className="body">
         <aside className="sidebar">
+          <WorkspaceBar
+            workspaces={workspaces}
+            current={workspace}
+            onSelect={(id) => { setWorkspaceId(id); setSelected(null) }}
+            onCreate={(name) => act(async () => {
+              const created = await api.createWorkspace(name)
+              setWorkspaceId(created.id)
+            })}
+            onAddRepo={(path) => act(() => api.addRepo(workspaceId, path))}
+            onRemoveRepo={(path) => act(() => api.removeRepo(workspaceId, path))}
+          />
+
           <div className="newfeature">
             <textarea
               rows={3}
@@ -94,7 +121,12 @@ export default function App() {
                 if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) create()
               }}
             />
-            <button className="primary" onClick={create} disabled={!task.trim()}>
+            <button
+              className="primary"
+              onClick={create}
+              disabled={!task.trim() || !workspace?.repos.length}
+              title={workspace?.repos.length ? '' : 'add a repo to this workspace first'}
+            >
               Plan it
             </button>
           </div>
@@ -118,7 +150,19 @@ export default function App() {
         </aside>
 
         <main className="main">
-          {!current && <div className="empty">Pick a feature, or describe one to get started.</div>}
+          {!workspace && (
+            <div className="empty">
+              Create a workspace, then add the repositories a feature may change.
+            </div>
+          )}
+          {workspace && !workspace.repos.length && (
+            <div className="empty">
+              {workspace.name} has no repositories yet — add one from the sidebar.
+            </div>
+          )}
+          {workspace && workspace.repos.length > 0 && !current && (
+            <div className="empty">Pick a feature, or describe one to get started.</div>
+          )}
 
           {current && (
             <>

@@ -10,7 +10,7 @@ from pathlib import Path
 import typer
 
 from vorflux import __version__, db, evidence, ui
-from vorflux.config import HOME, REPO_CONFIG, TEMPLATE, RepoConfig
+from vorflux.config import HOME, REPO_CONFIG, TEMPLATE
 from vorflux.harness import registry
 from vorflux.pipeline.engine import RunOutcome, run_cycle
 from vorflux.pipeline.schemas import PlanDoc
@@ -18,7 +18,8 @@ from vorflux.pipeline.stages.execute import StageError as ExecuteError
 from vorflux.pipeline.stages.execute import run_execute
 from vorflux.pipeline.stages.plan import StageError, run_plan
 from vorflux.pipeline.stages.review import StageError as ReviewError
-from vorflux.vcs import git, worktree
+from vorflux import workspace
+from vorflux.vcs import git, tree
 
 app = typer.Typer(
     add_completion=False,
@@ -122,26 +123,89 @@ def doctor() -> None:
         typer.secho(f"  cross-model review available: {', '.join(usable)}", fg=typer.colors.GREEN)
 
 
-def _open_repo(repo: Path) -> tuple[Path, RepoConfig]:
-    repo = repo.resolve()
-    if not git.is_repo(repo):
-        _err(f"{repo} is not a git repository")
+
+def _resolve_workspace(ref: str | None) -> workspace.Workspace:
+    """Find the workspace by reference, or infer it when there is only one."""
+    with db.connect() as conn:
+        if ref:
+            ws = workspace.get(conn, ref)
+            if ws is None:
+                _err(f"no workspace matching {ref!r}")
+                raise typer.Exit(1)
+            return ws
+        found = workspace.load_all(conn)
+    if len(found) == 1:
+        return found[0]
+    if not found:
+        _err("no workspaces yet — create one with `vorflux workspace new <name> <repo>`")
         raise typer.Exit(1)
-    return repo, RepoConfig.load(repo)
+    _err("several workspaces exist; pass --workspace")
+    for ws in found:
+        typer.secho(f"  {ws.id}  {ws.name}", fg=ui.DIM, err=True)
+    raise typer.Exit(1)
 
 
-def _plan_loop(
-    task: str,
-    cfg: RepoConfig,
-    wt,
-    run_id: str,
-    feature_id: str,
-    yes: bool,
-) -> bool:
-    """Plan, then approve / decline / revise. Returns True once a plan is approved.
+ws_app = typer.Typer(help="Manage workspaces — the set of repos a feature may change.")
+app.add_typer(ws_app, name="workspace")
 
-    A revision resumes the planner's session: it already spent real tokens reading the codebase,
-    and "use PKCE instead" should adjust that understanding rather than rebuild it.
+
+@ws_app.command("new")
+def workspace_new(
+    name: str = typer.Argument(..., help="Workspace name"),
+    repos: list[Path] = typer.Argument(None, help="Repositories to include"),
+) -> None:
+    """Create a workspace, optionally with its repos."""
+    with db.connect() as conn:
+        try:
+            ws = workspace.create(conn, name, list(repos or []))
+        except workspace.WorkspaceError as exc:
+            _err(str(exc))
+            raise typer.Exit(1) from exc
+    typer.secho(f"{ws.id}  {ws.name}", fg=typer.colors.GREEN)
+    for repo in ws.repos:
+        typer.secho(f"  {repo.name:<16} {repo.path}  ({repo.base_branch})", fg=ui.DIM)
+
+
+@ws_app.command("add")
+def workspace_add(
+    repo: Path = typer.Argument(..., help="Repository to add"),
+    ws_ref: str = typer.Option(None, "--workspace", "-w", help="Workspace id or name"),
+) -> None:
+    """Add a repository to a workspace."""
+    ws = _resolve_workspace(ws_ref)
+    with db.connect() as conn:
+        try:
+            added = workspace.attach(conn, ws.id, repo)
+        except workspace.WorkspaceError as exc:
+            _err(str(exc))
+            raise typer.Exit(1) from exc
+    typer.secho(f"added {added.name} ({added.base_branch}) to {ws.name}", fg=typer.colors.GREEN)
+
+
+@ws_app.command("list")
+def workspace_list() -> None:
+    """List workspaces and their repositories."""
+    with db.connect() as conn:
+        found = workspace.load_all(conn)
+        if not found:
+            typer.secho("no workspaces yet", fg=ui.DIM)
+            return
+        for ws in found:
+            count = len(db.features_in(conn, ws.id))
+            typer.secho(f"{ws.id}  {ws.name}", bold=True, nl=False)
+            typer.secho(f"   {count} feature(s)", fg=ui.DIM)
+            for repo in ws.repos:
+                mark = "" if repo.path.exists() else "  (missing)"
+                typer.secho(
+                    f"  {repo.name:<16} {repo.path} ({repo.base_branch}){mark}", fg=ui.DIM
+                )
+
+
+def _plan_loop(task: str, ws, trees, run_id: str, yes: bool) -> bool:
+    """Plan, then approve / decline / revise. True once a plan is approved.
+
+    A revision resumes the planner's session: it already paid to read this codebase, so feedback
+    should adjust that understanding rather than rebuild it.
     """
     session: str | None = None
     feedback: str | None = None
@@ -150,13 +214,8 @@ def _plan_loop(
         try:
             outcome = asyncio.run(
                 run_plan(
-                    task,
-                    cfg,
-                    run_id=run_id,
-                    on_event=ui.stream_line,
-                    cwd=wt.path,
-                    resume_session=session,
-                    feedback=feedback,
+                    task, ws, trees, run_id=run_id, on_event=ui.stream_line,
+                    resume_session=session, feedback=feedback,
                 )
             )
         except (StageError, KeyError) as exc:
@@ -169,7 +228,7 @@ def _plan_loop(
         with db.connect() as conn:
             db.set_run_plan(conn, run_id, outcome.plan.model_dump())
             db.record_session(
-                conn, run_id, "plan", cfg.harness["plan"], session, wt.path,
+                conn, run_id, "plan", ws.harness["plan"], session, trees.root,
                 tokens_in=outcome.tokens_in, tokens_out=outcome.tokens_out,
                 cost_usd=outcome.cost_usd,
             )
@@ -188,37 +247,44 @@ def _plan_loop(
 @app.command(name="plan")
 def plan_cmd(
     task: str = typer.Argument(..., help="What you want built"),
-    repo: Path = typer.Option(Path("."), "--repo", "-C", help="Repository root"),
+    ws_ref: str = typer.Option(None, "--workspace", "-w", help="Workspace id or name"),
     yes: bool = typer.Option(False, "--yes", "-y", help="Approve the first plan without asking"),
 ) -> None:
     """Plan a new feature, iterate on it, then approve it to run."""
-    repo, cfg = _open_repo(repo)
-    worktree.prune(repo)
+    ws = _resolve_workspace(ws_ref)
+    if not ws.repos:
+        _err(f"workspace {ws.name!r} has no repositories — add one with `vorflux workspace add`")
+        raise typer.Exit(1)
+    tree.prune(ws)
 
     feature_id = db.new_id()
-    wt = worktree.create(repo, feature_id, cfg.base_branch)
+    trees = tree.create(ws, feature_id)
+    primary = trees.trees[0]
     with db.connect() as conn:
         db.create_feature(
-            conn, repo, task, wt.branch, wt.path, cfg.base_branch, feature_id=feature_id
+            conn, primary.repo.path, task, trees.branch, trees.root, primary.base,
+            feature_id=feature_id, workspace_id=ws.id,
         )
         run_id, _ = db.create_run(conn, feature_id, task)
 
-    typer.secho(f"feature {feature_id}  branch {wt.branch}", fg=ui.DIM)
-    typer.secho(f"worktree {wt.path}", fg=ui.DIM)
+    typer.secho(f"feature {feature_id}  branch {trees.branch}", fg=ui.DIM)
+    for t in trees:
+        typer.secho(f"  {t.repo.name:<16} {t.path}", fg=ui.DIM)
 
-    if not _plan_loop(task, cfg, wt, run_id, feature_id, yes):
-        result = worktree.teardown(wt)
+    if not _plan_loop(task, ws, trees, run_id, yes):
+        results = tree.teardown(trees)
+        kept = {n: r for n, r in results.items() if not r.removed}
         with db.connect() as conn:
             db.finish_run(conn, run_id, "declined")
-            if result.removed:
-                db.delete_feature(conn, feature_id)
-            else:
+            if kept:
                 db.set_feature_status(conn, feature_id, "abandoned")
-        typer.secho(
-            "declined — worktree removed" if result.removed
-            else f"declined — worktree kept: {result.reason}",
-            fg=typer.colors.YELLOW,
-        )
+            else:
+                db.delete_feature(conn, feature_id)
+        if kept:
+            for name, result in kept.items():
+                typer.secho(f"declined — {name} kept: {result.reason}", fg=typer.colors.YELLOW)
+        else:
+            typer.secho("declined — worktrees removed", fg=typer.colors.YELLOW)
         raise typer.Exit(0)
 
     with db.connect() as conn:
@@ -230,86 +296,87 @@ def plan_cmd(
 def pivot_cmd(
     feature: str = typer.Argument(..., help="Feature id or branch"),
     intent: str = typer.Argument(..., help="What to change about it"),
-    repo: Path = typer.Option(Path("."), "--repo", "-C", help="Repository root"),
     yes: bool = typer.Option(False, "--yes", "-y", help="Approve the first plan without asking"),
 ) -> None:
     """Change direction on an existing feature.
 
     Delivered is a resting state, not a terminal one. A pivot plans against the feature's own
-    worktree — so the planner sees what was already built, not just the base branch — and appends
-    another run to the same branch. The executor session carries over, so the agent still knows
-    why it built things the way it did.
+    worktrees — so the planner sees what was already built — and appends a run to the same
+    branches. The executor session carries over, so the agent still knows why it built things
+    the way it did.
     """
-    repo, cfg = _open_repo(repo)
+    row, ws, trees = _load_feature(feature)
+    _check_drift(trees, assume_ignore=yes)
 
     with db.connect() as conn:
-        row = db.find_feature(conn, feature)
-        if row is None:
-            _err(f"no feature matching {feature!r}")
-            raise typer.Exit(1)
-        feature_id = row["id"]
+        run_id, iteration = db.create_run(conn, row["id"], intent)
+        db.set_feature_status(conn, row["id"], "planning")
 
-    wt = worktree.create(repo, feature_id, row["base_branch"])
-    _check_drift(wt, yes)
+    typer.secho(f"feature {row['id']}  iteration {iteration}  branch {trees.branch}", fg=ui.DIM)
 
-    with db.connect() as conn:
-        run_id, iteration = db.create_run(conn, feature_id, intent)
-        db.set_feature_status(conn, feature_id, "planning")
-
-    typer.secho(f"feature {feature_id}  iteration {iteration}  branch {wt.branch}", fg=ui.DIM)
-
-    if not _plan_loop(intent, cfg, wt, run_id, feature_id, yes):
-        # Never tear down on a declined pivot: earlier iterations' work is on this branch.
+    if not _plan_loop(intent, ws, trees, run_id, yes):
+        # Never tear down on a declined pivot: earlier iterations' work is on these branches.
         with db.connect() as conn:
             db.finish_run(conn, run_id, "declined")
-            db.set_feature_status(conn, feature_id, "executed")
+            db.set_feature_status(conn, row["id"], "executed")
         typer.secho("declined — earlier work left untouched", fg=typer.colors.YELLOW)
         raise typer.Exit(0)
 
     with db.connect() as conn:
-        db.set_feature_status(conn, feature_id, "approved")
-    typer.secho(f"approved — run it with:  vorflux execute {feature_id}", fg=typer.colors.GREEN)
+        db.set_feature_status(conn, row["id"], "approved")
+    typer.secho(f"approved — run it with:  vorflux execute {row['id']}", fg=typer.colors.GREEN)
 
 
-def _check_drift(wt, assume_ignore: bool = False) -> None:
-    """Surface base drift and let the user decide. Never rebase silently.
+def _load_feature(ref: str):
+    with db.connect() as conn:
+        row = db.find_feature(conn, ref)
+        if row is None:
+            _err(f"no feature matching {ref!r}")
+            raise typer.Exit(1)
+        ws = workspace.get(conn, row["workspace_id"] or "")
+    if ws is None:
+        _err(f"feature {row['id']} has no workspace")
+        raise typer.Exit(1)
+    return row, ws, tree.create(ws, row["id"])
 
-    An unattended rebase that hits conflicts mid-automation is a bad failure to discover later.
+
+def _check_drift(trees, assume_ignore: bool = False) -> None:
+    """Surface base drift per repo and let the user decide. Never rebase silently.
+
+    An unattended rebase that hits conflicts mid-automation is a bad thing to discover later.
     """
-    behind = worktree.drift(wt)
-    if not behind:
+    drifted = [(t, tree.drift(t)) for t in trees]
+    drifted = [(t, n) for t, n in drifted if n]
+    if not drifted:
         return
-    typer.secho(
-        f"  ! {wt.base} has advanced {behind} commit(s) since this feature branched",
-        fg=typer.colors.YELLOW,
-    )
+    for t, behind in drifted:
+        typer.secho(
+            f"  ! {t.repo.name}: {t.base} has advanced {behind} commit(s) since this branched",
+            fg=typer.colors.YELLOW,
+        )
     if assume_ignore:
         return
     choice = typer.prompt(
         "  [r]ebase onto it  [m]erge it in  [i]gnore", default="i"
     ).strip().lower()
-    if choice.startswith("r"):
-        git.git(wt.path, "rebase", wt.base)
-        typer.secho(f"  rebased onto {wt.base}", fg=typer.colors.GREEN)
-    elif choice.startswith("m"):
-        git.git(wt.path, "merge", "--no-edit", wt.base)
-        typer.secho(f"  merged {wt.base}", fg=typer.colors.GREEN)
+    for t, _ in drifted:
+        if choice.startswith("r"):
+            git.git(t.path, "rebase", t.base)
+        elif choice.startswith("m"):
+            git.git(t.path, "merge", "--no-edit", t.base)
+    if choice[:1] in ("r", "m"):
+        typer.secho("  done", fg=typer.colors.GREEN)
 
 
 @app.command(name="execute")
 def execute_cmd(
     feature: str = typer.Argument(..., help="Feature id or branch"),
-    repo: Path = typer.Option(Path("."), "--repo", "-C", help="Repository root"),
     no_review: bool = typer.Option(False, "--no-review", help="Implement only; skip the cycle"),
 ) -> None:
     """Run the full cycle on an approved plan: implement, review, fix, verify, deliver."""
-    repo, cfg = _open_repo(repo)
+    row, ws, trees = _load_feature(feature)
 
     with db.connect() as conn:
-        row = db.find_feature(conn, feature)
-        if row is None:
-            _err(f"no feature matching {feature!r}")
-            raise typer.Exit(1)
         runs = db.list_runs(conn, row["id"])
         prior = db.last_session(conn, row["id"], "execute")
 
@@ -319,12 +386,11 @@ def execute_cmd(
         raise typer.Exit(1)
 
     plan = PlanDoc.model_validate(json.loads(latest["plan_json"]))
-    wt = worktree.create(repo, row["id"], row["base_branch"])
-    _check_drift(wt, assume_ignore=True)
+    _check_drift(trees, assume_ignore=True)
 
-    if not no_review and cfg.harness["review"] == cfg.harness["execute"]:
+    if not no_review and ws.harness["review"] == ws.harness["execute"]:
         typer.secho(
-            f"  ! review and execute are both {cfg.harness['execute']} — a harness reviewing its"
+            f"  ! review and execute are both {ws.harness['execute']} — a harness reviewing its"
             " own work is not an independent review",
             fg=typer.colors.YELLOW,
         )
@@ -337,13 +403,13 @@ def execute_cmd(
         db.set_feature_status(conn, row["id"], "executing")
 
     def report(stage: str, message: str) -> None:
-        typer.secho(f"\n▸ {stage}: {message}", fg=typer.colors.CYAN, err=True)
+        typer.secho(f"\n\u25b8 {stage}: {message}", fg=typer.colors.CYAN, err=True)
 
     try:
         if no_review:
             executed = asyncio.run(
                 run_execute(
-                    plan, wt, cfg, latest["id"], latest["intent"],
+                    plan, trees, ws, latest["id"], latest["intent"],
                     resume_session=resume, on_event=ui.stream_line,
                 )
             )
@@ -359,7 +425,7 @@ def execute_cmd(
         else:
             outcome = asyncio.run(
                 run_cycle(
-                    plan, wt, cfg, latest["id"], latest["intent"],
+                    plan, trees, ws, latest["id"], latest["intent"],
                     resume_session=resume, on_event=ui.stream_line, report=report,
                 )
             )
@@ -370,18 +436,20 @@ def execute_cmd(
         _err(str(exc))
         raise typer.Exit(1) from exc
 
-    head_sha = outcome.execute.head_sha if outcome.execute else None
-
+    head_shas = outcome.execute.head_shas if outcome.execute else {}
     pack = evidence.write(
         evidence.Evidence(
             run_id=latest["id"],
             feature_id=row["id"],
             iteration=latest["iteration"],
             intent=latest["intent"],
-            branch=wt.branch,
-            base=wt.base,
+            branch=trees.branch,
+            base=", ".join(sorted({t.base for t in trees})),
+            workspace=ws.name,
+            repos=outcome.repos_touched,
+            head_shas=head_shas,
+            head_sha=outcome.execute.head_sha if outcome.execute else None,
             plan=plan,
-            head_sha=head_sha,
             files_changed=outcome.files_changed,
             reviews=outcome.reviews,
             verify=outcome.verify,
@@ -398,61 +466,67 @@ def execute_cmd(
             base_stage, _, attempt = stage.partition("-")
             db.record_session(
                 conn, latest["id"], base_stage,
-                cfg.harness.get(base_stage, cfg.harness["execute"]),
-                session_id, wt.path, attempt=int(attempt or 1),
+                ws.harness.get(base_stage, ws.harness["execute"]),
+                session_id, trees.root, attempt=int(attempt or 1),
             )
-        db.finish_run(conn, latest["id"], outcome.status, head_sha=head_sha)
+        db.finish_run(
+            conn, latest["id"], outcome.status,
+            head_sha=outcome.execute.head_sha if outcome.execute else None,
+        )
         db.set_feature_status(conn, row["id"], outcome.status)
 
-    ui.render_outcome(outcome, wt, repo, pack)
+    ui.render_outcome(outcome, trees, pack)
 
 
 @app.command(name="features")
 def features_cmd(
-    repo: Path = typer.Option(Path("."), "--repo", "-C", help="Repository root"),
-    all_repos: bool = typer.Option(False, "--all", help="Every repo, not just this one"),
+    ws_ref: str = typer.Option(None, "--workspace", "-w", help="Workspace id or name"),
+    all_workspaces: bool = typer.Option(False, "--all", help="Every workspace"),
 ) -> None:
     """List features and their state."""
-    target = None if all_repos else Path(repo).resolve()
     with db.connect() as conn:
-        rows = db.list_features(conn, target)
+        rows = (
+            db.list_features(conn)
+            if all_workspaces
+            else db.features_in(conn, _resolve_workspace(ws_ref).id)
+        )
         if not rows:
-            typer.secho("no features yet — start with `vorflux plan \"...\"`", fg=ui.DIM)
+            typer.secho('no features yet — start with `vorflux plan "..."`', fg=ui.DIM)
             return
         for row in rows:
             runs = db.list_runs(conn, row["id"])
-            status = row["status"]
             colour = {
-                "executed": typer.colors.GREEN,
+                "delivered": typer.colors.GREEN,
                 "failed": typer.colors.RED,
+                "verify_failed": typer.colors.RED,
+                "needs_human": typer.colors.YELLOW,
                 "abandoned": typer.colors.YELLOW,
-            }.get(status, typer.colors.WHITE)
-            typer.secho(f"  {row['id']}  {status:<10}", fg=colour, nl=False)
+            }.get(row["status"], typer.colors.WHITE)
+            typer.secho(f"  {row['id']}  {row['status']:<16}", fg=colour, nl=False)
             typer.echo(f"{row['title'][:56]}")
-            typer.secho(
-                f"        {row['branch']}  ·  {len(runs)} run(s)", fg=ui.DIM
-            )
+            typer.secho(f"        {row['branch']}  \u00b7  {len(runs)} run(s)", fg=ui.DIM)
 
 
 @app.command()
 def serve(
-    repo: Path = typer.Option(Path("."), "--repo", "-C", help="Repository root"),
     port: int = typer.Option(8787, help="Port to listen on"),
     host: str = typer.Option("127.0.0.1", help="Interface to bind"),
     open_browser: bool = typer.Option(True, "--open/--no-open", help="Open the UI on start"),
 ) -> None:
-    """Start the local daemon and web UI."""
+    """Start the local daemon and web UI.
+
+    Not scoped to a repository: workspaces are created and given repos from the app itself.
+    """
     import uvicorn
 
     from vorflux.api import server
 
-    repo, _ = _open_repo(repo)
-    worktree.prune(repo)
-    server.REPO = repo
+    with db.connect() as conn:
+        for ws in workspace.load_all(conn):
+            tree.prune(ws)
 
     url = f"http://{host}:{port}"
     typer.secho(f"vorflux {__version__}", bold=True)
-    typer.secho(f"  repo {repo}", fg=ui.DIM)
     typer.secho(f"  {url}", fg=typer.colors.GREEN)
 
     if open_browser:

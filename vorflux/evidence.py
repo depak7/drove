@@ -27,6 +27,9 @@ class Evidence:
     branch: str
     base: str
     plan: PlanDoc
+    workspace: str = ""
+    repos: list[str] = field(default_factory=list)
+    head_shas: dict[str, str] = field(default_factory=dict)
     head_sha: str | None = None
     files_changed: list[str] = field(default_factory=list)
     reviews: list[ReviewVerdict] = field(default_factory=list)
@@ -45,8 +48,11 @@ class Evidence:
             "intent": self.intent,
             "branch": self.branch,
             "base": self.base,
+            "workspace": self.workspace,
+            "repos": self.repos,
             "status": self.status,
             "head_sha": self.head_sha,
+            "head_shas": self.head_shas,
             "files_changed": self.files_changed,
             "plan": self.plan.model_dump(),
             "reviews": [r.model_dump() for r in self.reviews],
@@ -76,7 +82,17 @@ class Evidence:
             lines.append("")
 
         lines += ["## Delivered", ""]
-        lines.append(f"- commit `{(self.head_sha or '—')[:12]}`")
+        if len(self.head_shas) > 1:
+            # Spelled out deliberately: these branches are one change and have to be merged
+            # together. Landing one without the others is a broken deploy.
+            lines.append(
+                f"**{len(self.head_shas)} repositories — merge `{self.branch}` in all of them:**"
+            )
+            for repo, sha in self.head_shas.items():
+                lines.append(f"- `{repo}` → commit `{sha[:12]}`")
+        else:
+            lines.append(f"- commit `{(self.head_sha or '—')[:12]}`")
+        lines.append("")
         for path in self.files_changed:
             lines.append(f"- `{path}`")
         lines.append("")
@@ -98,7 +114,8 @@ class Evidence:
         else:
             for check in self.verify.checks:
                 mark = "pass" if check.ok else f"FAIL (exit {check.exit_code})"
-                lines.append(f"**{check.name}** — `{check.command}` — {mark} ({check.duration_s}s)")
+                label = f"{check.repo}/{check.name}" if check.repo else check.name
+                lines.append(f"**{label}** — `{check.command}` — {mark} ({check.duration_s}s)")
                 lines.append("")
                 lines.append("```")
                 lines.append(check.output.strip()[-2000:] or "(no output)")

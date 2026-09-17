@@ -26,13 +26,14 @@ from pathlib import Path
 
 from pydantic import ValidationError
 
-from vorflux.config import RepoConfig, runs_dir
+from vorflux.config import runs_dir
 from vorflux.events import HarnessEvent, Result
 from vorflux.harness import registry
 from vorflux.harness.base import InvokeSpec
 from vorflux.pipeline.schemas import PlanDoc, ReviewVerdict, json_schema
-from vorflux.vcs import git
-from vorflux.vcs.worktree import Worktree
+from vorflux.workspace import Workspace
+from vorflux.vcs import tree as trees_mod
+from vorflux.vcs.tree import FeatureTrees
 
 # Enough to review a normal feature inline; beyond it the reviewer runs git diff itself rather
 # than us silently truncating the thing being judged.
@@ -58,16 +59,16 @@ class ReviewOutcome:
         return self.verdict.verdict == "pass"
 
 
-def diff_for(wt: Worktree) -> str:
-    """Changes this branch introduces relative to where it diverged from base.
+def diff_for(trees: FeatureTrees) -> str:
+    """The feature's whole change, across every repo it touched.
 
-    Three dots, not two: `base...HEAD` is the change *since the merge base*, so commits that
-    landed on base after this feature branched are not reported as if the feature undid them.
+    Three dots (`base...HEAD`) means "since the merge base", so commits that landed on base after
+    this feature branched are not reported as if the feature undid them.
     """
-    return git.git(wt.path, "diff", f"{wt.base}...HEAD", check=False)
+    return trees_mod.combined_diff(trees)
 
 
-def render_prompt(plan: PlanDoc, wt: Worktree, diff: str) -> str:
+def render_prompt(plan: PlanDoc, trees: FeatureTrees, diff: str) -> str:
     template = (
         resources.files("vorflux.pipeline.prompts")
         .joinpath("review.md")
@@ -79,36 +80,48 @@ def render_prompt(plan: PlanDoc, wt: Worktree, diff: str) -> str:
             + f"\n\n[... truncated at {MAX_INLINE_DIFF} chars — run the git diff command above "
             "for the rest; do not judge on this excerpt alone ...]"
         )
+    touched = trees_mod.touched(trees)
+    scope = (
+        "\n".join(f"  {t.repo.name}  ({t.base}...{t.branch})" for t in touched)
+        or "  (none)"
+    )
+    multi = (
+        "\n\nThis change spans several repositories. Their branches have to be merged together — "
+        "landing one without the others is a broken deploy, so judge the change as a whole and "
+        "flag anything that would break if only part of it shipped."
+        if len(touched) > 1
+        else ""
+    )
     return template.format(
         plan=plan.model_dump_json(indent=2),
-        base=wt.base,
-        branch=wt.branch,
-        cwd=wt.path,
+        scope=scope + multi,
+        branch=trees.branch,
+        cwd=trees.root,
         diff=diff or "(no changes)",
     )
 
 
 async def run_review(
     plan: PlanDoc,
-    wt: Worktree,
-    cfg: RepoConfig,
+    trees: FeatureTrees,
+    workspace: Workspace,
     run_id: str,
     attempt: int = 1,
     on_event: Callable[[HarnessEvent], None] | None = None,
 ) -> ReviewOutcome:
-    diff = diff_for(wt)
+    diff = diff_for(trees)
     if not diff.strip():
-        raise StageError("nothing to review: the branch has no changes against its base")
+        raise StageError("nothing to review: no repo has changes against its base")
 
-    name = cfg.harness["review"]
+    name = workspace.harness["review"]
     harness = registry.get(name)
     # Fresh session, every round. Never resumed.
     session_id = str(uuid.uuid4())
     raw_log = runs_dir(run_id) / f"review-{attempt}.jsonl"
 
     spec = InvokeSpec(
-        prompt=render_prompt(plan, wt, diff),
-        cwd=wt.path,
+        prompt=render_prompt(plan, trees, diff),
+        cwd=trees.root,
         mode="readonly",
         output_schema=json_schema(ReviewVerdict),
         session_id=session_id,

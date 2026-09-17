@@ -57,7 +57,7 @@ STATUS_COLOUR = {
 }
 
 
-def render_outcome(outcome, wt, repo, pack) -> None:
+def render_outcome(outcome, trees, pack) -> None:
     """The end of a run: what happened, and where to look next."""
     typer.echo("")
     colour = STATUS_COLOUR.get(outcome.status, typer.colors.WHITE)
@@ -81,7 +81,19 @@ def render_outcome(outcome, wt, repo, pack) -> None:
     typer.secho(
         f"  {outcome.tokens_in:,} in / {outcome.tokens_out:,} out{dollars}", fg=DIM
     )
+    if len(outcome.repos_touched) > 1:
+        # Say it plainly: these branches are one change and merging one without the others is a
+        # broken deploy.
+        typer.secho(
+            f"  {len(outcome.repos_touched)} repos — merge {trees.branch} in all of them:",
+            fg=typer.colors.YELLOW,
+        )
+
     typer.echo("")
     typer.secho(f"  evidence: {pack}", fg=DIM)
-    typer.secho(f"  diff:     git -C {repo} diff {wt.base}..{wt.branch}", fg=DIM)
-    typer.secho(f"  tree:     {wt.path}", fg=DIM)
+    for t in trees:
+        if t.repo.name in outcome.repos_touched or not outcome.repos_touched:
+            typer.secho(
+                f"  {t.repo.name}: git -C {t.repo.path} diff {t.base}..{t.branch}", fg=DIM
+            )
+    typer.secho(f"  tree:     {trees.root}", fg=DIM)

@@ -1,4 +1,4 @@
-"""EXECUTE stage: an approved plan becomes commits on the feature branch."""
+"""EXECUTE stage: an approved plan becomes commits on the feature branch in each repo."""
 
 from __future__ import annotations
 
@@ -8,16 +8,18 @@ from dataclasses import dataclass, field
 from importlib import resources
 from pathlib import Path
 
-from vorflux.config import RepoConfig, runs_dir
-from vorflux.events import FileChanged, HarnessEvent, Result
+from vorflux.config import runs_dir
+from vorflux.events import HarnessEvent, Result
 from vorflux.harness import registry
 from vorflux.harness.base import InvokeSpec
 from vorflux.pipeline.schemas import PlanDoc
 from vorflux.vcs import git
-from vorflux.vcs.worktree import Worktree
+from vorflux.vcs import tree as trees_mod
+from vorflux.vcs.tree import FeatureTrees
+from vorflux.workspace import Workspace
 
-# Above this share of the context window, resuming risks a lossy auto-compaction mid-task, so a
-# pivot starts a fresh session seeded with a written handoff instead.
+# Above this share of the context window, resuming risks a lossy auto-compaction mid-task, so the
+# next round starts a fresh session seeded with a written handoff instead.
 CONTEXT_HANDOFF_THRESHOLD = 0.60
 DEFAULT_CONTEXT_WINDOW = 200_000
 
@@ -29,8 +31,8 @@ class StageError(RuntimeError):
 @dataclass
 class ExecuteOutcome:
     session_id: str
-    head_sha: str | None
-    committed: bool
+    head_shas: dict[str, str] = field(default_factory=dict)
+    committed: bool = False
     files_changed: list[str] = field(default_factory=list)
     final_text: str = ""
     cost_usd: float | None = None
@@ -38,23 +40,35 @@ class ExecuteOutcome:
     tokens_out: int = 0
     raw_log: Path | None = None
 
+    @property
+    def head_sha(self) -> str | None:
+        """The primary repo's commit — what a single-repo feature means by "the commit"."""
+        return next(iter(self.head_shas.values()), None)
 
-def render_prompt(plan: PlanDoc, branch: str) -> str:
+
+def render_prompt(plan: PlanDoc, trees: FeatureTrees) -> str:
     template = (
         resources.files("vorflux.pipeline.prompts")
         .joinpath("execute.md")
         .read_text(encoding="utf-8")
     )
-    return template.format(plan=plan.model_dump_json(indent=2), branch=branch)
+    repos = "\n".join(f"  {t.repo.name}/   (base branch {t.base})" for t in trees)
+    return template.format(
+        plan=plan.model_dump_json(indent=2),
+        branch=trees.branch,
+        root=trees.root,
+        repos=repos,
+    )
 
 
-def write_plan_file(wt: Worktree, plan: PlanDoc) -> Path:
-    """Drop the approved plan into the worktree.
+def write_plan_file(root: Path, plan: PlanDoc) -> Path:
+    """Drop the approved plan into the feature root.
 
-    Gitignored, so it never reaches a commit. It means the agent can re-read its own instructions
-    at any point — including after a compaction has dropped them from the conversation.
+    Gitignored, and outside every repo's worktree, so it can never reach a commit. It means the
+    agent can re-read its own instructions at any point — including after a compaction has dropped
+    them from the conversation.
     """
-    target = wt.path / ".vorflux" / "plan.md"
+    target = root / ".vorflux" / "plan.md"
     target.parent.mkdir(parents=True, exist_ok=True)
     (target.parent / ".gitignore").write_text("*\n")
     target.write_text(_as_markdown(plan))
@@ -92,44 +106,43 @@ def should_resume(tokens_in: int, cache_read: int, window: int = DEFAULT_CONTEXT
 
 async def run_execute(
     plan: PlanDoc,
-    wt: Worktree,
-    cfg: RepoConfig,
+    trees: FeatureTrees,
+    workspace: Workspace,
     run_id: str,
     title: str,
     resume_session: str | None = None,
     on_event: Callable[[HarnessEvent], None] | None = None,
     prompt_override: str | None = None,
 ) -> ExecuteOutcome:
-    """Implement the plan, or — with `prompt_override` — a fix round against the same session.
+    """Implement the plan, or — with `prompt_override` — a fix round in the same session.
 
-    A fix round is the same stage, not a new one: same harness, same worktree, same conversation.
+    A fix round is the same stage, not a new one: same harness, same worktrees, same conversation.
     Only the instruction differs, so the agent does not re-derive the code it just wrote.
     """
     session_id = resume_session or str(uuid.uuid4())
     suffix = "execute" if prompt_override is None else "fix"
     raw_log = runs_dir(run_id) / f"{suffix}.jsonl"
 
-    write_plan_file(wt, plan)
+    write_plan_file(trees.root, plan)
 
-    harness = registry.get(cfg.harness["execute"])
+    harness = registry.get(workspace.harness["execute"])
     spec = InvokeSpec(
-        prompt=prompt_override or render_prompt(plan, wt.branch),
-        cwd=wt.path,
+        prompt=prompt_override or render_prompt(plan, trees),
+        # The agent works from the feature root so every repo is a sibling directory, and each
+        # worktree is granted explicitly so writes are allowed where they belong and nowhere else.
+        cwd=trees.root,
         mode="write",
         session_id=session_id,
         resume=bool(resume_session),
-        extra_dirs=[wt.path],
+        extra_dirs=[t.path for t in trees],
         raw_log=raw_log,
     )
 
-    touched: list[str] = []
     result: Result | None = None
     async for event in harness.invoke(spec):
         if on_event:
             on_event(event)
-        if isinstance(event, FileChanged) and event.path not in touched:
-            touched.append(event.path)
-        elif isinstance(event, Result):
+        if isinstance(event, Result):
             result = event
 
     if result is None:
@@ -137,13 +150,13 @@ async def run_execute(
     if not result.ok:
         raise StageError(f"executor failed: {result.error or 'unknown error'}")
 
-    head_sha, committed = commit(wt, title)
+    head_shas = commit(trees, title)
 
     return ExecuteOutcome(
         session_id=result.session_id or session_id,
-        head_sha=head_sha,
-        committed=committed,
-        files_changed=touched,
+        head_shas=head_shas,
+        committed=bool(head_shas),
+        files_changed=trees_mod.changed_files(trees),
         final_text=result.final_text,
         cost_usd=result.cost_usd,
         tokens_in=result.tokens_in,
@@ -152,27 +165,25 @@ async def run_execute(
     )
 
 
-def commit(wt: Worktree, title: str) -> tuple[str | None, bool]:
-    """Vorflux is the sole committer.
+def commit(trees: FeatureTrees, title: str) -> dict[str, str]:
+    """Commit in every repo the agent touched. Vorflux is the sole committer.
 
-    Agents are told not to commit, so that what lands on the branch is exactly one reviewable unit
-    per run rather than whatever cadence the model happened to choose. It also sidesteps the
-    `index.lock` contention that bites when several agents share a repo.
+    Agents are told not to commit so that each run lands as exactly one reviewable unit per repo,
+    rather than whatever cadence the model happened to choose. It also sidesteps the `index.lock`
+    contention that bites when several agents share a repository.
+
+    The same subject in each repo is deliberate: it is how a reviewer recognises the branches as
+    one change spread across repositories.
     """
-    if not git.is_dirty(wt.path):
-        return (git.head_sha(wt.path), False)
-
-    git.git(wt.path, "add", "-A")
-    # The user's own words, not plan.summary — a summary is an explanatory paragraph whose first
-    # line makes a terrible subject ("`test_calc.py` does `from calc import add, subtract`, but…").
+    # The user's own words, not plan.summary — a summary is explanatory prose whose first line
+    # makes a terrible commit subject.
     message = " ".join(title.split())[:72] or "vorflux run"
-    git.git(
-        wt.path,
-        "-c",
-        "commit.gpgsign=false",
-        "commit",
-        "-q",
-        "-m",
-        message,
-    )
-    return (git.head_sha(wt.path), True)
+
+    shas: dict[str, str] = {}
+    for t in trees:
+        if not git.is_dirty(t.path):
+            continue
+        git.git(t.path, "add", "-A")
+        git.git(t.path, "-c", "commit.gpgsign=false", "commit", "-q", "-m", message)
+        shas[t.repo.name] = git.head_sha(t.path)
+    return shas

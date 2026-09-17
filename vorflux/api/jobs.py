@@ -14,17 +14,15 @@ import asyncio
 import json
 from concurrent.futures import Future
 from dataclasses import dataclass
-from pathlib import Path
 from typing import Any
 
-from vorflux import db, evidence
-from vorflux.config import RepoConfig
-from vorflux.events import AssistantText, HarnessEvent, RateLimit, Result, ToolCall
+from vorflux import db, evidence, workspace as ws_mod
 from vorflux.api.bus import bus
+from vorflux.events import AssistantText, HarnessEvent, RateLimit, Result, ToolCall
 from vorflux.pipeline.engine import run_cycle
 from vorflux.pipeline.schemas import PlanDoc
 from vorflux.pipeline.stages.plan import run_plan
-from vorflux.vcs import worktree
+from vorflux.vcs import tree as trees_mod
 
 MAX_CONCURRENT_RUNS = 2
 _semaphore = asyncio.Semaphore(MAX_CONCURRENT_RUNS)
@@ -103,17 +101,24 @@ def _spawn(feature_id: str, coro) -> None:
 
 # --- planning ----------------------------------------------------------------------------------
 
-async def _plan(feature_id: str, task: str, feedback: str | None) -> None:
+def _context(feature_id: str):
+    """Everything a job needs: the feature row, its workspace, and its worktrees."""
     with db.connect() as conn:
         feature = db.get_feature(conn, feature_id)
         if feature is None:
             raise JobError(f"unknown feature {feature_id}")
-        repo = Path(feature["repo"])
+        workspace = ws_mod.get(conn, feature["workspace_id"] or "")
+        if workspace is None:
+            raise JobError(f"feature {feature_id} has no workspace")
         runs = db.list_runs(conn, feature_id)
-        prior = db.last_session(conn, feature_id, "plan")
+    trees = trees_mod.create(workspace, feature_id)
+    return feature, workspace, trees, runs
 
-    cfg = RepoConfig.load(repo)
-    wt = worktree.create(repo, feature_id, feature["base_branch"])
+
+async def _plan(feature_id: str, task: str, feedback: str | None) -> None:
+    _, workspace, trees, runs = _context(feature_id)
+    with db.connect() as conn:
+        prior = db.last_session(conn, feature_id, "plan")
     run_id = runs[-1]["id"]
 
     emit(feature_id, "status", status="planning")
@@ -122,10 +127,10 @@ async def _plan(feature_id: str, task: str, feedback: str | None) -> None:
 
     outcome = await run_plan(
         task,
-        cfg,
+        workspace,
+        trees,
         run_id=run_id,
         on_event=_event_reporter(feature_id),
-        cwd=wt.path,
         # A revision continues the planner's conversation: it already paid to read this codebase.
         resume_session=prior["session_id"] if (prior and feedback) else None,
         feedback=feedback,
@@ -134,7 +139,7 @@ async def _plan(feature_id: str, task: str, feedback: str | None) -> None:
     with db.connect() as conn:
         db.set_run_plan(conn, run_id, outcome.plan.model_dump())
         db.record_session(
-            conn, run_id, "plan", cfg.harness["plan"], outcome.session_id, wt.path,
+            conn, run_id, "plan", workspace.harness["plan"], outcome.session_id, trees.root,
             tokens_in=outcome.tokens_in, tokens_out=outcome.tokens_out, cost_usd=outcome.cost_usd,
         )
         db.set_feature_status(conn, feature_id, "awaiting_approval")
@@ -150,25 +155,20 @@ def start_plan(feature_id: str, task: str, feedback: str | None = None) -> None:
 # --- the run cycle -----------------------------------------------------------------------------
 
 async def _cycle(feature_id: str) -> None:
+    _, workspace, trees, runs = _context(feature_id)
     with db.connect() as conn:
-        feature = db.get_feature(conn, feature_id)
-        if feature is None:
-            raise JobError(f"unknown feature {feature_id}")
-        repo = Path(feature["repo"])
-        runs = db.list_runs(conn, feature_id)
         prior = db.last_session(conn, feature_id, "execute")
 
     latest = next((r for r in reversed(runs) if r["plan_json"]), None)
     if latest is None:
         raise JobError("no approved plan")
 
-    cfg = RepoConfig.load(repo)
     plan = PlanDoc.model_validate(json.loads(latest["plan_json"]))
-    wt = worktree.create(repo, feature_id, feature["base_branch"])
 
-    drift = worktree.drift(wt)
-    if drift:
-        emit(feature_id, "drift", base=wt.base, commits=drift)
+    for t in trees:
+        behind = trees_mod.drift(t)
+        if behind:
+            emit(feature_id, "drift", repo=t.repo.name, base=t.base, commits=behind)
 
     def report(stage: str, message: str) -> None:
         emit(feature_id, "stage", stage=stage, message=message)
@@ -178,7 +178,7 @@ async def _cycle(feature_id: str) -> None:
     emit(feature_id, "status", status="executing")
 
     outcome = await run_cycle(
-        plan, wt, cfg, latest["id"], latest["intent"],
+        plan, trees, workspace, latest["id"], latest["intent"],
         resume_session=prior["session_id"] if prior else None,
         on_event=_event_reporter(feature_id),
         report=report,
@@ -191,8 +191,11 @@ async def _cycle(feature_id: str) -> None:
             feature_id=feature_id,
             iteration=latest["iteration"],
             intent=latest["intent"],
-            branch=wt.branch,
-            base=wt.base,
+            branch=trees.branch,
+            base=", ".join(sorted({t.base for t in trees})),
+            workspace=workspace.name,
+            repos=outcome.repos_touched,
+            head_shas=outcome.execute.head_shas if outcome.execute else {},
             plan=plan,
             head_sha=head_sha,
             files_changed=outcome.files_changed,
@@ -211,8 +214,8 @@ async def _cycle(feature_id: str) -> None:
             base_stage, _, attempt = stage.partition("-")
             db.record_session(
                 conn, latest["id"], base_stage,
-                cfg.harness.get(base_stage, cfg.harness["execute"]),
-                session_id, wt.path, attempt=int(attempt or 1),
+                workspace.harness.get(base_stage, workspace.harness["execute"]),
+                session_id, trees.root, attempt=int(attempt or 1),
             )
         db.finish_run(conn, latest["id"], outcome.status, head_sha=head_sha)
         db.set_feature_status(conn, feature_id, outcome.status)
@@ -221,6 +224,7 @@ async def _cycle(feature_id: str) -> None:
         feature_id, "done",
         status=outcome.status, note=outcome.note, evidence=str(pack),
         cost_usd=outcome.cost_usd, files_changed=outcome.files_changed,
+        repos=outcome.repos_touched,
         reviews=[r.model_dump() for r in outcome.reviews],
     )
     emit(feature_id, "status", status=outcome.status)

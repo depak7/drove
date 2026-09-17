@@ -13,11 +13,13 @@ from pathlib import Path
 
 from pydantic import ValidationError
 
-from vorflux.config import RepoConfig, runs_dir
+from vorflux.config import runs_dir
 from vorflux.events import HarnessEvent, Result
 from vorflux.harness import registry
 from vorflux.harness.base import InvokeSpec
 from vorflux.pipeline.schemas import PlanDoc, json_schema
+from vorflux.vcs.tree import FeatureTrees
+from vorflux.workspace import Workspace
 
 
 class StageError(RuntimeError):
@@ -40,9 +42,10 @@ def _template(name: str) -> str:
     )
 
 
-def render_prompt(task: str, cfg: RepoConfig, cwd: Path | None = None) -> str:
+def render_prompt(task: str, workspace: Workspace, trees: FeatureTrees) -> str:
+    repos = "\n".join(f"  {t.repo.name}/   (base branch {t.base})" for t in trees)
     return _template("plan.md").format(
-        repo=cwd or cfg.root, base_branch=cfg.base_branch, task=task
+        workspace=workspace.name, root=trees.root, repos=repos, task=task
     )
 
 
@@ -52,10 +55,10 @@ def render_revision(feedback: str) -> str:
 
 async def run_plan(
     task: str,
-    cfg: RepoConfig,
+    workspace: Workspace,
+    trees: FeatureTrees,
     run_id: str | None = None,
     on_event: Callable[[HarnessEvent], None] | None = None,
-    cwd: Path | None = None,
     resume_session: str | None = None,
     feedback: str | None = None,
 ) -> PlanOutcome:
@@ -65,23 +68,22 @@ async def run_plan(
     over. That matters: the planner spent real tokens reading the codebase, and a revision like
     "use PKCE instead" should adjust that understanding, not rebuild it from nothing.
 
-    `cwd` defaults to the repo. A pivot passes the feature's worktree instead, so the planner sees
-    what was already built rather than only the base branch.
+    The planner always runs in the feature's worktrees, so on a pivot it sees what was already
+    built rather than only the base branch.
     """
     run_id = run_id or uuid.uuid4().hex[:12]
     session_id = resume_session or str(uuid.uuid4())
     raw_log = runs_dir(run_id) / "plan.jsonl"
-    cwd = cwd or cfg.root
 
     if feedback and resume_session:
         prompt = render_revision(feedback)
     else:
-        prompt = render_prompt(task, cfg, cwd)
+        prompt = render_prompt(task, workspace, trees)
 
-    harness = registry.get(cfg.harness["plan"])
+    harness = registry.get(workspace.harness["plan"])
     spec = InvokeSpec(
         prompt=prompt,
-        cwd=cwd,
+        cwd=trees.root,
         mode="readonly",
         output_schema=json_schema(PlanDoc),
         session_id=session_id,

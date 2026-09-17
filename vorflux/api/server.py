@@ -20,22 +20,33 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 from vorflux import __version__, db
+from vorflux import workspace as ws_mod
 from vorflux.api import jobs
 from vorflux.api.bus import bus
-from vorflux.config import RepoConfig, runs_dir
+from vorflux.config import runs_dir
 from vorflux.harness import registry
-from vorflux.vcs import git, worktree
+from vorflux.vcs import git
+from vorflux.vcs import tree as trees_mod
 from vorflux.vcs.git import GitError
 from vorflux.vcs.worktree import WorktreeError
+from vorflux.workspace import WorkspaceError
 
 api = APIRouter(prefix="/api")
 
-# Set by serve(); the daemon is scoped to one repository, matching the CLI's model.
-REPO: Path = Path()
+
+class NewWorkspace(BaseModel):
+    name: str
+    repos: list[str] = []
+
+
+class NewRepo(BaseModel):
+    path: str
+    name: str | None = None
 
 
 class NewFeature(BaseModel):
     task: str
+    workspace_id: str
 
 
 class Feedback(BaseModel):
@@ -46,11 +57,32 @@ class Pivot(BaseModel):
     intent: str
 
 
+def _workspace_json(conn, ws: ws_mod.Workspace) -> dict[str, Any]:
+    return {
+        "id": ws.id,
+        "name": ws.name,
+        "harness": ws.harness,
+        "independent_review": ws.harness["review"] != ws.harness["execute"],
+        "repos": [
+            {
+                "path": str(r.path),
+                "name": r.name,
+                "base_branch": r.base_branch,
+                "verify": list(r.config.verify),
+                "exists": r.path.exists(),
+            }
+            for r in ws.repos
+        ],
+        "features": len(db.features_in(conn, ws.id)),
+    }
+
+
 def _feature_json(conn, row) -> dict[str, Any]:
     runs = db.list_runs(conn, row["id"])
     latest_plan = next((r for r in reversed(runs) if r["plan_json"]), None)
     return {
         "id": row["id"],
+        "workspace_id": row["workspace_id"],
         "title": row["title"],
         "branch": row["branch"],
         "base": row["base_branch"],
@@ -75,44 +107,103 @@ def _feature_json(conn, row) -> dict[str, Any]:
 
 @api.get("/health")
 def health() -> dict[str, Any]:
-    harnesses = {
-        name: {"path": registry.which(p.binary), "auth": registry.auth_state(name)}
-        for name, p in registry.PRESETS.items()
-    }
-    cfg = RepoConfig.load(REPO)
     return {
         "version": __version__,
-        "repo": str(REPO),
-        "base_branch": cfg.base_branch,
-        "harnesses": harnesses,
-        "stages": cfg.harness,
-        "verify": cfg.verify,
-        "independent_review": cfg.harness["review"] != cfg.harness["execute"],
+        "harnesses": {
+            name: {"path": registry.which(p.binary), "auth": registry.auth_state(name)}
+            for name, p in registry.PRESETS.items()
+        },
         "active": jobs.active_features(),
     }
 
 
-@api.get("/features")
-def list_features() -> list[dict[str, Any]]:
+# --- workspaces --------------------------------------------------------------------------------
+
+@api.get("/workspaces")
+def list_workspaces() -> list[dict[str, Any]]:
     with db.connect() as conn:
-        return [_feature_json(conn, row) for row in db.list_features(conn, REPO)]
+        return [_workspace_json(conn, ws) for ws in ws_mod.load_all(conn)]
+
+
+@api.post("/workspaces")
+def create_workspace(body: NewWorkspace) -> dict[str, Any]:
+    with db.connect() as conn:
+        ws = ws_mod.create(conn, body.name, [Path(p) for p in body.repos])
+        return _workspace_json(conn, ws)
+
+
+def _workspace(conn, workspace_id: str) -> ws_mod.Workspace:
+    ws = ws_mod.get(conn, workspace_id)
+    if ws is None:
+        raise HTTPException(404, f"no workspace {workspace_id}")
+    return ws
+
+
+@api.post("/workspaces/{workspace_id}/repos")
+def add_repo(workspace_id: str, body: NewRepo) -> dict[str, Any]:
+    with db.connect() as conn:
+        ws = _workspace(conn, workspace_id)
+        ws_mod.attach(conn, ws.id, Path(body.path), body.name)
+        return _workspace_json(conn, _workspace(conn, workspace_id))
+
+
+@api.delete("/workspaces/{workspace_id}/repos")
+def remove_repo(workspace_id: str, path: str) -> dict[str, Any]:
+    with db.connect() as conn:
+        ws = _workspace(conn, workspace_id)
+        ws_mod.detach(conn, ws.id, Path(path))
+        return _workspace_json(conn, _workspace(conn, workspace_id))
+
+
+@api.delete("/workspaces/{workspace_id}")
+def delete_workspace(workspace_id: str) -> dict[str, bool]:
+    with db.connect() as conn:
+        ws = _workspace(conn, workspace_id)
+        if db.features_in(conn, ws.id):
+            raise HTTPException(
+                400, "this workspace still has features; their branches would be orphaned"
+            )
+        db.delete_workspace(conn, ws.id)
+    return {"deleted": True}
+
+
+# --- features ----------------------------------------------------------------------------------
+
+@api.get("/features")
+def list_features(workspace_id: str | None = None) -> list[dict[str, Any]]:
+    with db.connect() as conn:
+        rows = (
+            db.features_in(conn, workspace_id)
+            if workspace_id
+            else db.list_features(conn)
+        )
+        return [_feature_json(conn, row) for row in rows]
 
 
 @api.post("/features")
 def create_feature(body: NewFeature) -> dict[str, Any]:
-    cfg = RepoConfig.load(REPO)
     feature_id = db.new_id()
-    wt = worktree.create(REPO, feature_id, cfg.base_branch)
     with db.connect() as conn:
+        ws = _workspace(conn, body.workspace_id)
+        if not ws.repos:
+            raise HTTPException(400, f"workspace {ws.name!r} has no repositories yet")
+        trees = trees_mod.create(ws, feature_id)
+        primary = trees.trees[0]
         db.create_feature(
-            conn, REPO, body.task, wt.branch, wt.path, cfg.base_branch, feature_id=feature_id
+            conn, primary.repo.path, body.task, trees.branch, trees.root,
+            primary.base, feature_id=feature_id, workspace_id=ws.id,
         )
         db.create_run(conn, feature_id, body.task)
-        row = db.get_feature(conn, feature_id)
-        payload = _feature_json(conn, row)
+        payload = _feature_json(conn, db.get_feature(conn, feature_id))
 
     jobs.start_plan(feature_id, body.task)
     return payload
+
+
+def _trees_for(row):
+    with db.connect() as conn:
+        ws = _workspace(conn, row["workspace_id"] or "")
+    return trees_mod.create(ws, row["id"])
 
 
 def _load(feature_id: str):
@@ -148,15 +239,23 @@ def approve(feature_id: str) -> dict[str, Any]:
 @api.post("/features/{feature_id}/decline")
 def decline(feature_id: str) -> dict[str, Any]:
     row, _ = _load(feature_id)
-    wt = worktree.create(REPO, row["id"], row["base_branch"])
-    result = worktree.teardown(wt)
+    trees = _trees_for(row)
+    results = trees_mod.teardown(trees)
+
+    kept = {name: r for name, r in results.items() if not r.removed}
     with db.connect() as conn:
-        if result.removed:
-            db.delete_feature(conn, row["id"])
-        else:
+        if kept:
             db.set_feature_status(conn, row["id"], "abandoned")
-    jobs.emit(row["id"], "status", status="declined" if result.removed else "abandoned")
-    return {"removed": result.removed, "reason": result.reason, "recovery": result.recovery}
+        else:
+            db.delete_feature(conn, row["id"])
+    jobs.emit(row["id"], "status", status="abandoned" if kept else "declined")
+    return {
+        "removed": not kept,
+        # Per repo: one repo's work being merged is no reason to delete another's.
+        "kept": {
+            name: {"reason": r.reason, "recovery": r.recovery} for name, r in kept.items()
+        },
+    }
 
 
 @api.post("/features/{feature_id}/pivot")
@@ -171,13 +270,22 @@ def pivot(feature_id: str, body: Pivot) -> dict[str, Any]:
 @api.get("/features/{feature_id}/diff")
 def diff(feature_id: str) -> dict[str, Any]:
     row, _ = _load(feature_id)
-    path = Path(row["worktree_path"])
-    if not path.exists():
-        return {"diff": "", "note": "worktree no longer on disk"}
+    if not Path(row["worktree_path"]).exists():
+        return {"diff": "", "repos": [], "note": "worktrees no longer on disk"}
+
+    trees = _trees_for(row)
     return {
-        "diff": git.git(path, "diff", f"{row['base_branch']}...HEAD", check=False),
-        "stat": git.git(path, "diff", "--stat", f"{row['base_branch']}...HEAD", check=False),
-        "drift": git.commits_behind(path, row["base_branch"], "HEAD"),
+        "diff": trees_mod.combined_diff(trees),
+        "repos": [
+            {
+                "name": t.repo.name,
+                "branch": t.branch,
+                "base": t.base,
+                "stat": git.git(t.path, "diff", "--stat", f"{t.base}...HEAD", check=False),
+                "drift": trees_mod.drift(t),
+            }
+            for t in trees_mod.touched(trees)
+        ],
     }
 
 
@@ -225,6 +333,7 @@ async def lifespan(app: FastAPI):
 def build_app() -> FastAPI:
     app = FastAPI(title="vorflux", version=__version__, lifespan=lifespan)
 
+    @app.exception_handler(WorkspaceError)
     @app.exception_handler(WorktreeError)
     @app.exception_handler(GitError)
     def _operational_error(request, exc):

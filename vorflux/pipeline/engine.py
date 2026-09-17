@@ -9,16 +9,15 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from dataclasses import dataclass, field
-from pathlib import Path
 
-from vorflux.config import RepoConfig
 from vorflux.events import HarnessEvent
 from vorflux.pipeline.schemas import PlanDoc, ReviewVerdict
 from vorflux.pipeline.stages import review as review_stage
 from vorflux.pipeline.stages import verify as verify_stage
 from vorflux.pipeline.stages.execute import ExecuteOutcome, run_execute
-from vorflux.vcs import git
-from vorflux.vcs.worktree import Worktree
+from vorflux.vcs import tree as trees_mod
+from vorflux.vcs.tree import FeatureTrees
+from vorflux.workspace import Workspace
 
 MAX_FIX_ROUNDS = 2
 
@@ -31,6 +30,7 @@ class RunOutcome:
     verify: verify_stage.VerifyOutcome | None = None
     sessions: dict[str, str] = field(default_factory=dict)
     files_changed: list[str] = field(default_factory=list)
+    repos_touched: list[str] = field(default_factory=list)
     cost_usd: float | None = None
     tokens_in: int = 0
     tokens_out: int = 0
@@ -46,8 +46,8 @@ def _noop(stage: str, message: str) -> None:  # pragma: no cover - default repor
 
 async def run_cycle(
     plan: PlanDoc,
-    wt: Worktree,
-    cfg: RepoConfig,
+    trees: FeatureTrees,
+    workspace: Workspace,
     run_id: str,
     intent: str,
     resume_session: str | None = None,
@@ -66,7 +66,7 @@ async def run_cycle(
     # --- EXECUTE ---------------------------------------------------------------------------
     report("execute", "implementing the approved plan")
     executed = await run_execute(
-        plan, wt, cfg, run_id, intent, resume_session=resume_session, on_event=on_event
+        plan, trees, workspace, run_id, intent, resume_session=resume_session, on_event=on_event
     )
     outcome.execute = executed
     outcome.files_changed = list(executed.files_changed)
@@ -76,13 +76,13 @@ async def run_cycle(
     if not executed.committed:
         outcome.status = "no_changes"
         outcome.note = "the executor made no changes"
-        return _finish(outcome, costs, wt)
+        return _finish(outcome, costs, trees)
 
     # --- REVIEW / FIX ----------------------------------------------------------------------
     for attempt in range(1, MAX_FIX_ROUNDS + 1):
-        report("review", f"independent review by {cfg.harness['review']} (round {attempt})")
+        report("review", f"independent review by {workspace.harness['review']} (round {attempt})")
         reviewed = await review_stage.run_review(
-            plan, wt, cfg, run_id, attempt=attempt, on_event=on_event
+            plan, trees, workspace, run_id, attempt=attempt, on_event=on_event
         )
         outcome.reviews.append(reviewed.verdict)
         # Each round is a distinct session: the reviewer is never resumed.
@@ -98,18 +98,18 @@ async def run_cycle(
                 f"still blocked after {MAX_FIX_ROUNDS} review rounds: "
                 f"{len(reviewed.verdict.blocking)} issue(s) outstanding"
             )
-            return _finish(outcome, costs, wt)
+            return _finish(outcome, costs, trees)
 
         report("fix", f"addressing {len(reviewed.verdict.blocking)} blocking issue(s)")
         fixed = await run_execute(
             plan,
-            wt,
-            cfg,
+            trees,
+            workspace,
             run_id,
             f"fix: {intent}",
             resume_session=executed.session_id,  # the implementer keeps its memory
             on_event=on_event,
-            prompt_override=review_stage.render_fix_prompt(reviewed.verdict, wt.branch),
+            prompt_override=review_stage.render_fix_prompt(reviewed.verdict, trees.branch),
         )
         outcome.files_changed = sorted(set(outcome.files_changed) | set(fixed.files_changed))
         account(fixed.cost_usd, fixed.tokens_in, fixed.tokens_out)
@@ -118,24 +118,37 @@ async def run_cycle(
     outcome.execute = executed
 
     # --- VERIFY ----------------------------------------------------------------------------
-    if cfg.verify:
-        report("verify", f"running {len(cfg.verify)} project command(s)")
-        verified = verify_stage.run_verify(Path(wt.path), cfg.verify)
+    configured = _configured_checks(trees)
+    if configured:
+        report("verify", f"running {configured} project command(s)")
+        verified = verify_stage.run_all(trees, workspace)
         outcome.verify = verified
         if not verified.passed:
             outcome.status = "verify_failed"
-            names = ", ".join(c.name for c in verified.failures)
+            names = ", ".join(
+                f"{c.repo}/{c.name}" if c.repo else c.name for c in verified.failures
+            )
             outcome.note = f"project checks failed: {names}"
-            return _finish(outcome, costs, wt)
+            return _finish(outcome, costs, trees)
 
     outcome.status = "delivered"
-    return _finish(outcome, costs, wt)
+    return _finish(outcome, costs, trees)
 
 
-def _finish(outcome: RunOutcome, costs: list[float], wt: Worktree | None = None) -> RunOutcome:
+def _configured_checks(trees: FeatureTrees) -> int:
+    """How many verify commands the touched repos declare between them."""
+    return sum(len(t.repo.config.verify) for t in trees_mod.touched(trees))
+
+
+def _finish(
+    outcome: RunOutcome, costs: list[float], trees: FeatureTrees | None = None
+) -> RunOutcome:
     outcome.cost_usd = sum(costs) if costs else None
-    if wt is not None:
-        changed = git.changed_files(wt.path, wt.base)
+    if trees is not None:
+        # git is the authority on what changed, not the harness event stream: codex emits
+        # FileChanged events, claude does not.
+        changed = trees_mod.changed_files(trees)
         if changed:
             outcome.files_changed = changed
+        outcome.repos_touched = [t.repo.name for t in trees_mod.touched(trees)]
     return outcome
