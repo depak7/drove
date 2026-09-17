@@ -8,6 +8,8 @@ from __future__ import annotations
 
 import shutil
 import subprocess
+import tomllib
+from pathlib import Path
 from dataclasses import dataclass
 from typing import Literal
 
@@ -29,6 +31,10 @@ class Preset:
     # Checked against stdout AND stderr: codex prints "Logged in using ChatGPT" to stderr.
     auth_probe: tuple[list[str], str] | None = None
     supports_schema: bool = True
+    # A command that lists the models this CLI can run, when it has one.
+    list_models_cmd: list[str] | None = None
+    # Models we know work, for CLIs that cannot enumerate. Never invented — these are verified.
+    known_models: tuple[str, ...] = ()
 
 
 PRESETS: dict[str, Preset] = {
@@ -39,6 +45,9 @@ PRESETS: dict[str, Preset] = {
         factory=ClaudeCodeHarness,
         # No cheap offline login probe; presence on PATH is all we can assert for free.
         auth_probe=None,
+        # claude has no list command. These three aliases are verified working; anything else can
+        # be typed in, because a hardcoded list of model ids goes stale the week it ships.
+        known_models=("opus", "sonnet", "haiku"),
     ),
     "codex": Preset(
         name="codex",
@@ -46,6 +55,7 @@ PRESETS: dict[str, Preset] = {
         install="npm i -g @openai/codex",
         factory=CodexHarness,
         auth_probe=(["codex", "login", "status"], "Logged in"),
+        # codex has no list command either; its configured default is read from config.toml.
     ),
     "opencode": Preset(
         name="opencode",
@@ -55,6 +65,7 @@ PRESETS: dict[str, Preset] = {
         # Each configured credential renders as a "●" bullet; no bullets means nothing is
         # authenticated. Cosmetic-format dependent, but a wrong answer only downgrades the
         # doctor line to a warning, it never blocks a run.
+        list_models_cmd=["opencode", "models"],
         auth_probe=(["opencode", "providers", "list"], "\u25cf"),
         # No --json-schema equivalent; the adapter asks for JSON in the prompt instead.
         supports_schema=False,
@@ -99,3 +110,49 @@ def available() -> dict[str, str | None]:
     found = {p.name: which(p.binary) for p in PRESETS.values()}
     found.update({name: which(name) for name in PLANNED})
     return found
+
+
+def configured_model(name: str) -> str | None:
+    """Whatever the CLI is already set to use, so the UI can show a real default.
+
+    Only codex records this somewhere we can read; the others decide at runtime.
+    """
+    if name != "codex":
+        return None
+    config = Path.home() / ".codex" / "config.toml"
+    if not config.exists():
+        return None
+    try:
+        data = tomllib.loads(config.read_text())
+    except (OSError, tomllib.TOMLDecodeError):
+        return None
+    model = data.get("model")
+    return str(model) if isinstance(model, str) else None
+
+
+def list_models(name: str) -> list[str]:
+    """Models this harness offers: enumerated when the CLI can, otherwise what we know works.
+
+    Never a fabricated list. A stale hardcoded model id is worse than an empty picker, because the
+    run fails at spawn time with a provider error rather than at the point of choosing.
+    """
+    preset = PRESETS.get(name)
+    if preset is None:
+        return []
+
+    models: list[str] = list(preset.known_models)
+    if preset.list_models_cmd and which(preset.list_models_cmd[0]):
+        try:
+            proc = subprocess.run(
+                preset.list_models_cmd,
+                capture_output=True, text=True, timeout=30, stdin=subprocess.DEVNULL,
+            )
+            if proc.returncode == 0:
+                found = [line.strip() for line in proc.stdout.splitlines() if line.strip()]
+                models = found or models
+        except (OSError, subprocess.SubprocessError):
+            pass
+
+    if (current := configured_model(name)) and current not in models:
+        models.insert(0, current)
+    return models

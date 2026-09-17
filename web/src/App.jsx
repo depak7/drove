@@ -3,6 +3,7 @@ import { api } from './api'
 import { useStream } from './useStream'
 import { Diff, Gate, Log, Pill, Plan, Rail, StageLegend } from './components'
 import { WorkspaceSheet } from './Workspaces'
+import { SettingsSheet } from './Settings'
 import { Mark, Wordmark } from './Logo'
 import { isDesktop, notify, setPulse } from './desktop'
 
@@ -15,6 +16,7 @@ export default function App() {
   const [features, setFeatures] = useState([])
   const [selected, setSelected] = useState(null)
   const [sheet, setSheet] = useState(false)
+  const [settings, setSettings] = useState(false)
   const [tab, setTab] = useState('plan')
   const [diff, setDiff] = useState(null)
   const [evidence, setEvidence] = useState('')
@@ -115,12 +117,22 @@ export default function App() {
         <span className="grow" />
 
         {workspace && (
-          <div className="chain" title="Different models plan, implement and review">
-            <span className="node">{workspace.harness.execute}</span>
+          <button
+            className="chain"
+            onClick={() => setSettings(true)}
+            title="Choose which harness and model runs each stage"
+          >
+            <span className="node">
+              {workspace.harness.execute}
+              {workspace.models?.execute && <em>{workspace.models.execute}</em>}
+            </span>
             <span className="arrow">builds</span>
-            <span className="node">{workspace.harness.review}</span>
+            <span className="node">
+              {workspace.harness.review}
+              {workspace.models?.review && <em>{workspace.models.review}</em>}
+            </span>
             <span className="arrow">reviews</span>
-          </div>
+          </button>
         )}
         <span className={`live-dot ${connected ? '' : 'off'}`} title={connected ? 'live' : 'reconnecting'} />
       </header>
@@ -132,6 +144,14 @@ export default function App() {
         </div>
       )}
       {error && <div className="banner bad">{error}</div>}
+
+      {settings && workspace && (
+        <SettingsSheet
+          workspace={workspace}
+          onClose={() => setSettings(false)}
+          onSave={(harness, models) => act(() => api.saveSettings(workspace.id, harness, models))}
+        />
+      )}
 
       {sheet && (
         <WorkspaceSheet

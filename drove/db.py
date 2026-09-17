@@ -81,6 +81,11 @@ MIGRATIONS: list[str] = [
     ALTER TABLE features ADD COLUMN workspace_id TEXT REFERENCES workspaces(id);
     CREATE INDEX features_by_workspace ON features(workspace_id);
     """,
+    # 3 — which model each stage runs. Null means "let the CLI decide", which stays the default:
+    # pinning a model id in config is how a workspace silently breaks when a provider retires one.
+    """
+    ALTER TABLE workspaces ADD COLUMN models TEXT;
+    """,
 ]
 
 # Data migrations that need real code. Keyed by the schema version they run after.
@@ -334,6 +339,15 @@ def last_session(conn: sqlite3.Connection, feature_id: str, stage: str) -> sqlit
 
 
 # --- workspaces -------------------------------------------------------------------------------
+
+def set_workspace_config(
+    conn: sqlite3.Connection, workspace_id: str, harness: dict, models: dict
+) -> None:
+    conn.execute(
+        "UPDATE workspaces SET harness = ?, models = ? WHERE id = ?",
+        (json.dumps(harness), json.dumps(models), workspace_id),
+    )
+
 
 def create_workspace(conn: sqlite3.Connection, name: str, harness: dict | None = None) -> str:
     workspace_id = new_id()

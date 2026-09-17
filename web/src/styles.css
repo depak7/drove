@@ -525,3 +525,32 @@ pre.block {
 .sheet .ws-item:hover { background: var(--surface-3); }
 .sheet .ws-item.on { border-color: var(--accent); }
 .sheet .ws-item small { color: var(--text-3); font-size: 11px; }
+
+/* settings sheet */
+/* Centered, not anchored: the control that opens it sits on the right while the workspace
+   sheet hangs off the left, and a panel appearing on the opposite side of the screen from the
+   thing you clicked reads as a different surface entirely. */
+.sheet.settings {
+  width: 520px; gap: 14px;
+  top: 50%; left: 50%; transform: translate(-50%, -50%);
+}
+.srow-head { display: flex; align-items: center; justify-content: space-between; }
+.srow-foot { display: flex; align-items: center; gap: 10px; padding-top: 4px; border-top: 1px solid var(--line); }
+.srow-foot .hint { flex: 1; font-size: 11.5px; color: var(--text-3); }
+
+.stagecfg { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; align-items: center; }
+.stagecfg .lbl { display: grid; gap: 2px; }
+.stagecfg .lbl b { font-size: 13px; font-weight: 600; }
+.stagecfg .lbl span { font-size: 11.5px; color: var(--text-3); line-height: 1.45; }
+.stagecfg .picks { display: grid; gap: 6px; }
+.stagecfg select, .stagecfg input { font-size: 12.5px; padding: 6px 9px; }
+
+.freemodel { display: flex; gap: 6px; align-items: center; }
+.freemodel select, .freemodel input { flex: 1; min-width: 0; }
+.note.bad { color: var(--bad); }
+
+/* the harness chain is a control, not a label */
+button.chain { background: none; border: none; padding: 4px 6px; border-radius: var(--radius-sm); }
+button.chain:hover { background: var(--surface-2); }
+.chain .node { display: inline-flex; align-items: baseline; gap: 6px; }
+.chain .node em { font-style: normal; font-size: 10.5px; color: var(--text-3); }

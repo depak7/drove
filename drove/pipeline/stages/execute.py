@@ -133,6 +133,7 @@ async def run_execute(
         cwd=trees.root,
         mode="write",
         session_id=session_id,
+        model=workspace.model_for("execute"),
         resume=bool(resume_session),
         extra_dirs=[t.path for t in trees],
         raw_log=raw_log,

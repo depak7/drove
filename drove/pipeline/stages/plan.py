@@ -87,6 +87,7 @@ async def run_plan(
         mode="readonly",
         output_schema=json_schema(PlanDoc),
         session_id=session_id,
+        model=workspace.model_for("plan"),
         resume=bool(resume_session),
         raw_log=raw_log,
     )

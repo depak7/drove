@@ -1,0 +1,124 @@
+import { useEffect, useState } from 'react'
+
+const STAGES = [
+  ['plan',    'Plan',    'Reads your code and writes the plan you approve.'],
+  ['execute', 'Execute', 'Writes the code on an isolated branch.'],
+  ['review',  'Review',  'Judges the diff. Must not be the harness that wrote it.'],
+  ['arbiter', 'Arbiter', 'Breaks a deadlock when review and execute disagree twice.'],
+]
+
+export function SettingsSheet({ workspace, onClose, onSave }) {
+  const [harnesses, setHarnesses] = useState([])
+  const [harness, setHarness] = useState(workspace.harness)
+  const [models, setModels] = useState(workspace.models ?? {})
+  const [saving, setSaving] = useState(false)
+
+  useEffect(() => { api_harnesses().then(setHarnesses).catch(() => setHarnesses([])) }, [])
+
+  const usable = harnesses.filter((h) => h.installed)
+  const modelsFor = (name) => harnesses.find((h) => h.name === name)?.models ?? []
+  const independent = harness.review !== harness.execute
+
+  const save = async () => {
+    setSaving(true)
+    await onSave(harness, models)
+    setSaving(false)
+    onClose()
+  }
+
+  return (
+    <>
+      <div className="sheet-scrim" onClick={onClose} />
+      <div className="sheet settings">
+        <div className="srow-head">
+          <span className="eyebrow">Stages · {workspace.name}</span>
+          <button className="ghost tiny" onClick={onClose}>esc</button>
+        </div>
+
+        {STAGES.map(([key, label, why]) => (
+          <div className="stagecfg" key={key}>
+            <div className="lbl">
+              <b>{label}</b>
+              <span>{why}</span>
+            </div>
+            <div className="picks">
+              <select
+                value={harness[key] ?? ''}
+                onChange={(e) => {
+                  const next = e.target.value
+                  setHarness({ ...harness, [key]: next })
+                  // A model id belongs to one harness; carrying it across would fail at spawn.
+                  setModels({ ...models, [key]: '' })
+                }}
+              >
+                {usable.map((h) => <option key={h.name} value={h.name}>{h.name}</option>)}
+              </select>
+
+              <ModelPicker
+                value={models[key] ?? ''}
+                options={modelsFor(harness[key])}
+                onChange={(v) => setModels({ ...models, [key]: v })}
+              />
+            </div>
+          </div>
+        ))}
+
+        {!independent && (
+          <div className="note bad">
+            {harness.execute} would review its own work. A model that just argued for a shortcut
+            tends to accept it — that is not an independent review.
+          </div>
+        )}
+
+        <div className="srow-foot">
+          <span className="hint">Leave a model unset to use whatever that CLI defaults to.</span>
+          <button className="primary" onClick={save} disabled={saving}>
+            {saving ? 'Saving…' : 'Save'}
+          </button>
+        </div>
+      </div>
+    </>
+  )
+}
+
+/**
+ * A select when the CLI can enumerate its models, a text field when it cannot.
+ *
+ * Only opencode has a list command. Offering a hardcoded dropdown for the others would go stale
+ * the week a provider retires an id, and the run would then fail at spawn rather than here.
+ */
+function ModelPicker({ value, options, onChange }) {
+  const [free, setFree] = useState(false)
+
+  if (options.length === 0 || free) {
+    return (
+      <div className="freemodel">
+        <input
+          placeholder="default"
+          value={value}
+          onChange={(e) => onChange(e.target.value)}
+        />
+        {options.length > 0 && (
+          <button className="ghost tiny" onClick={() => setFree(false)}>list</button>
+        )}
+      </div>
+    )
+  }
+
+  return (
+    <div className="freemodel">
+      <select value={value} onChange={(e) => onChange(e.target.value)}>
+        <option value="">default</option>
+        {options.map((m) => <option key={m} value={m}>{m}</option>)}
+      </select>
+      <button className="ghost tiny" onClick={() => setFree(true)} title="Type a model id">type</button>
+    </div>
+  )
+}
+
+// Imported lazily to keep this file free of a circular import with api.js consumers.
+async function api_harnesses() {
+  const res = await fetch('/api/harnesses')
+  if (!res.ok) throw new Error(await res.text())
+  return res.json()
+}

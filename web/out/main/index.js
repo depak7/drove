@@ -27,19 +27,19 @@ function resolveBin(name) {
 }
 function engineCommand() {
   if (app.isPackaged) {
-    return { command: join(process.resourcesPath, "vorflux-sidecar"), args: ["serve", "--no-open", "--port", String(PORT)] };
+    return { command: join(process.resourcesPath, "drove-sidecar"), args: ["serve", "--no-open", "--port", String(PORT)] };
   }
-  const cli = resolveBin("vorflux");
+  const cli = resolveBin("drove");
   if (cli) return { command: cli, args: ["serve", "--no-open", "--port", String(PORT)] };
   const uv = resolveBin("uv");
-  if (uv) return { command: uv, args: ["run", "vorflux", "serve", "--no-open", "--port", String(PORT)] };
+  if (uv) return { command: uv, args: ["run", "drove", "serve", "--no-open", "--port", String(PORT)] };
   return null;
 }
 let engineError = "";
 function startEngine() {
   const resolved = engineCommand();
   if (!resolved) {
-    engineError = "Could not find the vorflux engine. Install it with:  uv tool install --force .";
+    engineError = "Could not find the drove engine. Install it with:  uv tool install --force .";
     return;
   }
   engine = spawn(resolved.command, resolved.args, {
@@ -131,7 +131,7 @@ app.whenReady().then(async () => {
       "The engine did not start",
       engineError || `Nothing is listening on 127.0.0.1:${PORT}.
 
-Try running \`vorflux serve\` in a terminal to see the error.`
+Try running \`drove serve\` in a terminal to see the error.`
     );
   }
 });

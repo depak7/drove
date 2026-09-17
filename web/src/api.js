@@ -15,6 +15,13 @@ export const api = {
   browseRepos: (path) => fetch(`/api/repos/browse${path ? `?path=${encodeURIComponent(path)}` : ''}`).then(json),
 
   workspaces: () => fetch('/api/workspaces').then(json),
+  harnesses: () => fetch('/api/harnesses').then(json),
+  saveSettings: (id, harness, models) =>
+    fetch(`/api/workspaces/${id}/settings`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ harness, models }),
+    }).then(json),
   createWorkspace: (name, repos = []) => post('/api/workspaces', { name, repos }),
   addRepo: (id, path) => post(`/api/workspaces/${id}/repos`, { path }),
   removeRepo: (id, path) =>

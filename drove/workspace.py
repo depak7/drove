@@ -48,6 +48,11 @@ class Workspace:
     name: str
     repos: list[Repo] = field(default_factory=list)
     harness: dict[str, str] = field(default_factory=lambda: dict(DEFAULT_HARNESSES))
+    # stage -> model id, or absent/None meaning "whatever that CLI defaults to"
+    models: dict[str, str | None] = field(default_factory=dict)
+
+    def model_for(self, stage: str) -> str | None:
+        return self.models.get(stage) or None
 
     @property
     def root(self) -> Path:
@@ -80,7 +85,10 @@ def _row_to_workspace(conn, row) -> Workspace:
     harness = dict(DEFAULT_HARNESSES)
     if row["harness"]:
         harness.update(json.loads(row["harness"]))
-    return Workspace(id=row["id"], name=row["name"], repos=repos, harness=harness)
+    models = json.loads(row["models"]) if row["models"] else {}
+    return Workspace(
+        id=row["id"], name=row["name"], repos=repos, harness=harness, models=models
+    )
 
 
 def get(conn, ref: str) -> Workspace | None:

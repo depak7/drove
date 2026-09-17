@@ -64,6 +64,13 @@ class NewFeature(BaseModel):
     workspace_id: str
 
 
+class Settings(BaseModel):
+    """Which harness runs each stage, and on which model."""
+
+    harness: dict[str, str] = {}
+    models: dict[str, str | None] = {}
+
+
 class Feedback(BaseModel):
     feedback: str
 
@@ -77,6 +84,7 @@ def _workspace_json(conn, ws: ws_mod.Workspace) -> dict[str, Any]:
         "id": ws.id,
         "name": ws.name,
         "harness": ws.harness,
+        "models": ws.models,
         "independent_review": ws.harness["review"] != ws.harness["execute"],
         "repos": [
             {
@@ -214,6 +222,42 @@ def delete_workspace(workspace_id: str) -> dict[str, bool]:
 
 
 # --- features ----------------------------------------------------------------------------------
+
+@api.get("/harnesses")
+def harnesses() -> list[dict[str, Any]]:
+    """What can run a stage, and what each one can run on."""
+    out = []
+    for name, preset in registry.PRESETS.items():
+        path = registry.which(preset.binary)
+        out.append({
+            "name": name,
+            "installed": bool(path),
+            "auth": registry.auth_state(name) if path else "logged_out",
+            "supports_schema": preset.supports_schema,
+            "install": preset.install,
+            # Empty is honest: two of three CLIs cannot enumerate, so the UI offers free text.
+            "models": registry.list_models(name) if path else [],
+            "default_model": registry.configured_model(name),
+        })
+    return out
+
+
+@api.put("/workspaces/{workspace_id}/settings")
+def update_settings(workspace_id: str, body: Settings) -> dict[str, Any]:
+    with db.connect() as conn:
+        ws = _workspace(conn, workspace_id)
+        harness = {**ws.harness, **{k: v for k, v in body.harness.items() if v}}
+
+        unknown = [v for v in harness.values() if v not in registry.PRESETS]
+        if unknown:
+            raise HTTPException(400, f"no adapter for {', '.join(sorted(set(unknown)))}")
+
+        # An empty string from a <select> means "let the CLI decide", which is not the same as
+        # never having chosen — so store the key with None rather than dropping it.
+        models = {**ws.models, **{k: (v or None) for k, v in body.models.items()}}
+        db.set_workspace_config(conn, ws.id, harness, models)
+        return _workspace_json(conn, _workspace(conn, workspace_id))
+
 
 @api.get("/features")
 def list_features(workspace_id: str | None = None) -> list[dict[str, Any]]:

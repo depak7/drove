@@ -124,6 +124,7 @@ async def run_review(
         cwd=trees.root,
         mode="readonly",
         output_schema=json_schema(ReviewVerdict),
+        model=workspace.model_for("review"),
         session_id=session_id,
         raw_log=raw_log,
     )
