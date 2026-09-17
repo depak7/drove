@@ -42,11 +42,21 @@ class ReviewVerdict(BaseModel):
     blocking: list[BlockingIssue] = Field(default_factory=list)
 
 
-def json_schema(model: type[BaseModel]) -> dict[str, Any]:
-    """Pydantic schema with ``$ref``/``$defs`` inlined.
+def json_schema(model: type[BaseModel], strict: bool = True) -> dict[str, Any]:
+    """Pydantic schema, inlined and (by default) in OpenAI strict mode.
 
-    Harness ``--json-schema`` implementations do not reliably resolve references, so nested models
-    are flattened into a single self-contained document.
+    Two harness-driven transforms:
+
+    * ``$ref``/``$defs`` are inlined, because harness ``--json-schema`` implementations do not
+      reliably resolve references.
+    * strict mode adds ``additionalProperties: false`` to every object and lists every property
+      in ``required``. Codex rejects anything else outright::
+
+          invalid_json_schema: In context=(), 'additionalProperties' is required to be
+          supplied and to be false.
+
+      Claude accepts loose schemas, but strict is a superset that both accept, so there is one
+      schema shape for all harnesses rather than one per vendor.
     """
     raw = model.model_json_schema()
     defs = raw.pop("$defs", {})
@@ -58,11 +68,28 @@ def json_schema(model: type[BaseModel]) -> dict[str, Any]:
             if ref := node.get("$ref"):
                 name = ref.rsplit("/", 1)[-1]
                 target = inline(defs.get(name, {}), depth + 1)
-                merged = {**target, **{k: v for k, v in node.items() if k != "$ref"}}
-                return merged
+                return {**target, **{k: v for k, v in node.items() if k != "$ref"}}
             return {k: inline(v, depth + 1) for k, v in node.items()}
         if isinstance(node, list):
             return [inline(v, depth + 1) for v in node]
         return node
 
-    return inline(raw)
+    schema = inline(raw)
+
+    if strict:
+        def tighten(node: Any, depth: int = 0) -> Any:
+            if depth > 20 or not isinstance(node, dict):
+                if isinstance(node, list):
+                    return [tighten(v, depth + 1) for v in node]
+                return node
+            node = {k: tighten(v, depth + 1) for k, v in node.items()}
+            if isinstance(node.get("properties"), dict):
+                node["additionalProperties"] = False
+                # Strict mode requires *every* property listed; optionality is expressed by
+                # nullable types, not by omission.
+                node["required"] = list(node["properties"])
+            return node
+
+        schema = tighten(schema)
+
+    return schema

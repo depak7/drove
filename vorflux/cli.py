@@ -66,27 +66,55 @@ def init(
 
 @app.command()
 def doctor() -> None:
-    """Report which agent CLIs are installed and which adapters exist."""
+    """Report which agent CLIs are installed, authenticated and adapter-backed."""
     typer.echo(f"vorflux {__version__}   state: {HOME}")
     typer.echo("")
-    found = registry.available()
-    for name, path in found.items():
-        implemented = name in registry.PRESETS
-        if path and implemented:
-            mark, colour, note = "ok  ", typer.colors.GREEN, path
-        elif path:
-            mark, colour, note = "wait", typer.colors.YELLOW, f"{path} (adapter lands in M1)"
-        else:
-            install = (
-                registry.PRESETS[name].install if implemented else registry.PLANNED.get(name, "")
+
+    usable: list[str] = []
+    for name, path in registry.available().items():
+        preset = registry.PRESETS.get(name)
+
+        if path is None:
+            install = preset.install if preset else registry.PLANNED.get(name, "")
+            typer.secho(f"  [miss] {name:<14} not installed — {install}", fg=typer.colors.RED)
+            continue
+
+        if preset is None:
+            typer.secho(
+                f"  [wait] {name:<14} installed, no adapter yet", fg=typer.colors.YELLOW
             )
-            mark, colour, note = "miss", typer.colors.RED, f"not installed — {install}"
-        typer.secho(f"  [{mark}] {name:<14} {note}", fg=colour)
+            continue
+
+        auth = registry.auth_state(name)
+        notes = []
+        if not preset.supports_schema:
+            notes.append("schema via prompt")
+        suffix = f"  ({', '.join(notes)})" if notes else ""
+
+        if auth == "logged_out":
+            typer.secho(
+                f"  [auth] {name:<14} installed but logged out — run `{name} login`",
+                fg=typer.colors.YELLOW,
+            )
+            continue
+
+        label = "ok  " if auth == "ok" else "ok? "
+        colour = typer.colors.GREEN if auth == "ok" else typer.colors.BRIGHT_BLACK
+        typer.secho(f"  [{label}] {name:<14} {path}{suffix}", fg=colour)
+        usable.append(name)
 
     typer.echo("")
-    if not any(p for n, p in found.items() if n in registry.PRESETS):
-        _err("no usable harness found; vorflux cannot run a stage yet")
+    if not usable:
+        _err("no usable harness found; vorflux cannot run a stage")
         raise typer.Exit(1)
+
+    if len(usable) < 2:
+        typer.secho(
+            "  only one harness usable — cross-model review needs a second one",
+            fg=typer.colors.YELLOW,
+        )
+    else:
+        typer.secho(f"  cross-model review available: {', '.join(usable)}", fg=typer.colors.GREEN)
 
 
 @app.command(name="run")

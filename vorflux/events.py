@@ -60,11 +60,20 @@ class FileChanged(_Event):
 
 
 class Usage(_Event):
-    """A cumulative snapshot, never a delta.
+    """A DELTA for one step or turn, never a running total.
 
-    Harnesses report running totals for a session. Velocity is the difference between consecutive
-    snapshots; summing them double-counts. munder-difflin learned this the hard way — naive
-    last-value reads hid 59% of real spend because counters reset on restart.
+    Summing every Usage event in a stream gives that session's total. Adapters normalize to this,
+    because the harnesses disagree:
+
+    * claude reports per-assistant-message usage — already a delta.
+    * codex reports per-turn usage on ``turn.completed`` — already a delta.
+    * opencode reports per-step too, but ``tokens.total`` is a trap: it is that step's
+      ``input + output + reasoning + cache.read``, NOT a running total, and it rises across steps
+      only because the context grows. Summing it double-counts cached context — 58k of phantom
+      tokens in a 4-step run. The adapter uses the component fields and ignores ``total``.
+
+    munder-difflin hit the opposite problem: it *polled* counters, so it saw cumulative snapshots
+    and had to diff consecutive reads. Streaming hands us deltas directly.
     """
 
     kind: Literal["usage"] = "usage"
