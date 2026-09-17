@@ -1,0 +1,16 @@
+# vorflux-local project config
+
+base_branch = "main"
+
+[verify]
+# Commands run in the worktree after review passes. Omit what does not apply.
+# build = "npm run build"
+# test  = "npm test"
+# lint  = "npm run lint"
+
+[harness]
+# Cross-harness by stage: whoever writes the code must not be the one who reviews it.
+plan = "claude"
+execute = "claude"
+review = "codex"
+arbiter = "opencode"

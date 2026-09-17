@@ -1,0 +1,15 @@
+__pycache__/
+*.py[cod]
+.venv/
+dist/
+build/
+*.egg-info/
+.pytest_cache/
+.ruff_cache/
+vorflux/web/*
+!vorflux/web/.gitkeep
+web/node_modules/
+web/dist/
+.DS_Store
+.idea/
+.vscode/

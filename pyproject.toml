@@ -1,0 +1,40 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "vorflux-local"
+version = "0.1.0"
+description = "Local autonomous engineering pipeline — plan, execute, cross-model review and verify, driving the coding CLIs you already have"
+readme = "README.md"
+requires-python = ">=3.12"
+license = { text = "MIT" }
+dependencies = [
+    "typer>=0.12",
+    "pydantic>=2.7",
+]
+
+[project.optional-dependencies]
+server = ["fastapi>=0.111", "uvicorn>=0.30"]
+dev = ["pytest>=8.0", "pytest-asyncio>=0.23", "ruff>=0.5"]
+
+[project.scripts]
+vorflux = "vorflux.cli:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["vorflux"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+markers = ["live: hits a real harness CLI and spends tokens (deselected by default)"]
+addopts = "-m 'not live'"
+
+[tool.ruff]
+line-length = 100
+
+[tool.ruff.lint]
+select = ["E", "F", "B", "C4", "UP", "RUF"]
+
+[tool.ruff.lint.per-file-ignores]
+# typer declares options as call-expressions in defaults; that is the framework idiom.
+"vorflux/cli.py" = ["B008"]
