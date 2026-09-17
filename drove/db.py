@@ -409,3 +409,37 @@ def features_in(conn: sqlite3.Connection, workspace_id: str) -> list[sqlite3.Row
         "SELECT * FROM features WHERE workspace_id = ? ORDER BY created_at DESC",
         (workspace_id,),
     ).fetchall()
+
+
+# --- read models for the app's screens ---------------------------------------------------------
+
+def runs_in(conn: sqlite3.Connection, workspace_id: str, limit: int = 100) -> list[sqlite3.Row]:
+    """Every run in a workspace, newest first, with its feature and rolled-up cost."""
+    return conn.execute(
+        """
+        SELECT r.*, f.title, f.branch, f.status AS feature_status,
+               (SELECT COALESCE(SUM(s.cost_usd), 0) FROM sessions s WHERE s.run_id = r.id) AS cost,
+               (SELECT COALESCE(SUM(s.tokens_in), 0) FROM sessions s WHERE s.run_id = r.id) AS tin,
+               (SELECT COALESCE(SUM(s.tokens_out), 0) FROM sessions s WHERE s.run_id = r.id) AS tout
+        FROM runs r JOIN features f ON f.id = r.feature_id
+        WHERE f.workspace_id = ?
+        ORDER BY r.started_at DESC LIMIT ?
+        """,
+        (workspace_id, limit),
+    ).fetchall()
+
+
+def sessions_in(conn: sqlite3.Connection, workspace_id: str, limit: int = 200) -> list[sqlite3.Row]:
+    """Every agent session in a workspace — who ran what, on which conversation."""
+    return conn.execute(
+        """
+        SELECT s.*, r.intent, r.iteration, r.status AS run_status, r.started_at, r.ended_at,
+               f.id AS feature_id, f.title, f.status AS feature_status
+        FROM sessions s
+        JOIN runs r ON r.id = s.run_id
+        JOIN features f ON f.id = r.feature_id
+        WHERE f.workspace_id = ?
+        ORDER BY r.started_at DESC, s.attempt DESC LIMIT ?
+        """,
+        (workspace_id, limit),
+    ).fetchall()

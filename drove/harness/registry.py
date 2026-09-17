@@ -130,6 +130,42 @@ def configured_model(name: str) -> str | None:
     return str(model) if isinstance(model, str) else None
 
 
+def local_models() -> list[str]:
+    """Models served by a local runtime on this machine.
+
+    LM Studio is the one that exposes a listing (`lms ls`). Codex can drive these through
+    `--oss --local-provider lmstudio`, so they are real options, not decoration. Embeddings are
+    skipped — they cannot run an agent.
+    """
+    if which("lms") is None:
+        return []
+    try:
+        proc = subprocess.run(
+            ["lms", "ls"], capture_output=True, text=True, timeout=30, stdin=subprocess.DEVNULL
+        )
+    except (OSError, subprocess.SubprocessError):
+        return []
+    if proc.returncode != 0:
+        return []
+
+    models: list[str] = []
+    section = ""
+    for line in proc.stdout.splitlines():
+        stripped = line.strip()
+        if not stripped:
+            continue
+        head = stripped.split()[0].upper()
+        if head in ("LLM", "EMBEDDING"):
+            section = head
+            continue
+        if section != "LLM" or stripped.startswith("You have"):
+            continue
+        ident = stripped.split()[0]
+        if "/" in ident or "-" in ident:
+            models.append(ident)
+    return models
+
+
 def list_models(name: str) -> list[str]:
     """Models this harness offers: enumerated when the CLI can, otherwise what we know works.
 
@@ -155,4 +191,9 @@ def list_models(name: str) -> list[str]:
 
     if (current := configured_model(name)) and current not in models:
         models.insert(0, current)
+
+    # Codex is the one adapter that can drive a locally served model (--oss).
+    if name == "codex":
+        models.extend(m for m in local_models() if m not in models)
+
     return models

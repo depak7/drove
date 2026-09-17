@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import shlex
 from contextlib import asynccontextmanager
 from importlib import resources
 from pathlib import Path
@@ -257,6 +258,87 @@ def update_settings(workspace_id: str, body: Settings) -> dict[str, Any]:
         models = {**ws.models, **{k: (v or None) for k, v in body.models.items()}}
         db.set_workspace_config(conn, ws.id, harness, models)
         return _workspace_json(conn, _workspace(conn, workspace_id))
+
+
+@api.get("/workspaces/{workspace_id}/runs")
+def list_runs(workspace_id: str) -> list[dict[str, Any]]:
+    with db.connect() as conn:
+        ws = _workspace(conn, workspace_id)
+        return [
+            {
+                "id": r["id"],
+                "feature_id": r["feature_id"],
+                "title": r["title"],
+                "branch": r["branch"],
+                "iteration": r["iteration"],
+                "intent": r["intent"],
+                "status": r["status"],
+                "head_sha": r["head_sha"],
+                "started_at": r["started_at"],
+                "ended_at": r["ended_at"],
+                "duration_s": (
+                    round(r["ended_at"] - r["started_at"]) if r["ended_at"] else None
+                ),
+                "cost_usd": r["cost"] or None,
+                "tokens_in": r["tin"],
+                "tokens_out": r["tout"],
+            }
+            for r in db.runs_in(conn, ws.id)
+        ]
+
+
+# Which stage a session served maps to the role a person would name it.
+ROLE = {
+    "plan": "Planner",
+    "execute": "Builder",
+    "review": "Reviewer",
+    "arbiter": "Arbiter",
+}
+
+
+@api.get("/workspaces/{workspace_id}/agents")
+def list_agents(workspace_id: str) -> list[dict[str, Any]]:
+    """Agent sessions, newest first.
+
+    Each row is a real conversation that can be reopened: `cd <cwd> && <harness> --resume <id>`
+    drops you into what the agent actually did. That only works because the session id is minted
+    before the process starts, so it is recorded even for a run that died on its first turn.
+    """
+    active = set(jobs.active_features())
+    with db.connect() as conn:
+        ws = _workspace(conn, workspace_id)
+        return [
+            {
+                "session_id": s["session_id"],
+                "harness": s["harness"],
+                "stage": s["stage"],
+                "role": ROLE.get(s["stage"], s["stage"].title()),
+                "attempt": s["attempt"],
+                "cwd": s["cwd"],
+                "feature_id": s["feature_id"],
+                "title": s["title"],
+                "intent": s["intent"],
+                "tokens_in": s["tokens_in"],
+                "tokens_out": s["tokens_out"],
+                "cost_usd": s["cost_usd"],
+                "running": s["feature_id"] in active,
+                "started_at": s["started_at"],
+                # The exact command to reopen this conversation.
+                "resume": _resume_command(s["harness"], s["session_id"], s["cwd"]),
+            }
+            for s in db.sessions_in(conn, ws.id)
+        ]
+
+
+def _resume_command(harness: str, session_id: str, cwd: str) -> str | None:
+    """How to reattach to a session, per harness. None when that CLI cannot resume."""
+    if harness == "claude":
+        return f"cd {shlex.quote(cwd)} && claude --resume {session_id}"
+    if harness == "codex":
+        return f"cd {shlex.quote(cwd)} && codex exec resume --json {session_id}"
+    if harness == "opencode":
+        return f"cd {shlex.quote(cwd)} && opencode --session {session_id}"
+    return None
 
 
 @api.get("/features")

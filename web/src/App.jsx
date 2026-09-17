@@ -5,6 +5,9 @@ import { Diff, Gate, Log, Pill, Plan, Rail, StageLegend } from './components'
 import { WorkspaceSheet } from './Workspaces'
 import { SettingsSheet } from './Settings'
 import { Mark, Wordmark } from './Logo'
+import { PipelineStrip } from './Pipeline'
+import { Board } from './Board'
+import { Agents, Blank, Runs } from './Agents'
 import { isDesktop, notify, setPulse } from './desktop'
 
 const PIVOTABLE = ['delivered', 'landed', 'needs_human', 'verify_failed', 'no_changes']
@@ -16,6 +19,9 @@ export default function App() {
   const [features, setFeatures] = useState([])
   const [selected, setSelected] = useState(null)
   const [sheet, setSheet] = useState(false)
+  const [screen, setScreen] = useState('overview')
+  const [runs, setRuns] = useState([])
+  const [agents, setAgents] = useState([])
   const [settings, setSettings] = useState(false)
   const [tab, setTab] = useState('plan')
   const [diff, setDiff] = useState(null)
@@ -30,7 +36,14 @@ export default function App() {
       // Keep the selection valid: a deleted workspace must not leave the app pointing at nothing.
       const active = all.find((w) => w.id === workspaceId) ?? all[0]
       if (active && active.id !== workspaceId) setWorkspaceId(active.id)
-      setFeatures(active ? await api.features(active.id) : [])
+      if (active) {
+        const [f, r, a] = await Promise.all([
+          api.features(active.id), api.runs(active.id), api.agents(active.id),
+        ])
+        setFeatures(f); setRuns(r); setAgents(a)
+      } else {
+        setFeatures([]); setRuns([]); setAgents([])
+      }
     } catch (e) {
       setError(String(e.message ?? e))
     }
@@ -89,6 +102,9 @@ export default function App() {
 
   const active = features.filter((f) => f.busy || ACTIVE.includes(f.status))
   const settled = features.filter((f) => !active.includes(f))
+  const running = features.filter((f) => f.busy).length
+  const waiting = features.filter((f) => f.status === 'awaiting_approval').length
+  const spend = runs.reduce((sum, r) => sum + (r.cost_usd ?? 0), 0)
 
   return (
     <div className="shell">
@@ -96,45 +112,49 @@ export default function App() {
         <Wordmark />
 
         {workspace && (
-          <button className="ws" onClick={() => setSheet(true)}>
-            {workspace.name}
-            <span className="caret">▾</span>
-          </button>
+          <div className="zone">
+            <span className="zlabel">Workspace</span>
+            <button className="ws" onClick={() => setSheet(true)}>
+              {workspace.name}
+              <span className="caret">▾</span>
+            </button>
+          </div>
         )}
 
         {workspace && (
-          <div className="repos">
-            {workspace.repos.slice(0, 4).map((r) => (
-              <span className={`chip ${r.exists ? '' : 'missing'}`} key={r.path} title={r.path}>{r.name}</span>
-            ))}
-            {workspace.repos.length > 4 && <span className="chip">+{workspace.repos.length - 4}</span>}
-            {workspace.repos.length === 0 && (
-              <button className="ghost tiny" onClick={() => setSheet(true)}>+ add a repository</button>
-            )}
+          <div className="zone">
+            <span className="zlabel">
+              {workspace.repos.length === 1 ? 'Repository' : `Repositories · ${workspace.repos.length}`}
+            </span>
+            <div className="repos">
+              {workspace.repos.length === 0 ? (
+                <button className="ghost tiny" onClick={() => setSheet(true)}>+ add one</button>
+              ) : (
+                <>
+                  {workspace.repos.slice(0, 3).map((r) => (
+                    <span className={`chip ${r.exists ? '' : 'missing'}`} key={r.path} title={r.path}>
+                      {r.name}
+                    </span>
+                  ))}
+                  {workspace.repos.length > 3 && (
+                    <button className="chip add" onClick={() => setSheet(true)}>
+                      +{workspace.repos.length - 3}
+                    </button>
+                  )}
+                </>
+              )}
+            </div>
           </div>
         )}
 
         <span className="grow" />
 
         {workspace && (
-          <button
-            className="chain"
-            onClick={() => setSettings(true)}
-            title="Choose which harness and model runs each stage"
-          >
-            <span className="node">
-              {workspace.harness.execute}
-              {workspace.models?.execute && <em>{workspace.models.execute}</em>}
-            </span>
-            <span className="arrow">builds</span>
-            <span className="node">
-              {workspace.harness.review}
-              {workspace.models?.review && <em>{workspace.models.review}</em>}
-            </span>
-            <span className="arrow">reviews</span>
+          <button className="settings-btn" onClick={() => setSettings(true)} title="Choose the harness and model for each stage">
+            <span className="gear">⚙</span> Stages
           </button>
         )}
-        <span className={`live-dot ${connected ? '' : 'off'}`} title={connected ? 'live' : 'reconnecting'} />
+        <span className={`live-dot ${connected ? '' : 'off'}`} title={connected ? 'engine connected' : 'reconnecting'} />
       </header>
 
       {workspace && !workspace.independent_review && (
@@ -168,71 +188,140 @@ export default function App() {
         />
       )}
 
-      <div className="stage">
-        {!workspace ? (
-          <FirstRun onCreate={(name) => act(async () => {
-            const created = await api.createWorkspace(name)
-            setWorkspaceId(created.id)
-            setSheet(true)
-          })} />
-        ) : current ? (
-          <Detail
-            feature={current}
-            logs={logs[current.id] ?? []}
-            connected={connected}
-            tab={tab} setTab={setTab}
-            diff={diff} evidence={evidence}
-            onBack={() => setSelected(null)}
-            act={act}
-            onDiscard={() => { setSelected(null) }}
-          />
-        ) : (
-          <div className="stage-inner">
-            <div className="hero">
-              <h1>What do you want built?</h1>
-              {!ready && <p className="sub">Add a repository first — {workspace.name} has none.</p>}
-              <div className="prompt">
-                <textarea
-                  rows={2}
-                  placeholder={ready ? "Describe it the way you would to a colleague…" : 'Add a repository to begin'}
-                  value={task}
-                  disabled={!ready}
-                  onChange={(e) => setTask(e.target.value)}
-                  onKeyDown={(e) => { if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) create() }}
-                />
-                <div className="foot">
-                  <span className="kbd">Cmd + Enter</span>
-                  <span className="grow" />
-                  <button className="primary" onClick={create} disabled={!task.trim() || !ready}>
-                    Plan it
-                  </button>
+      <div className="work">
+        <nav className="nav">
+          <div className="group">
+            <span className="eyebrow">Workspace</span>
+            {[
+              ['overview', '◉', 'Overview'],
+              ['board', '▦', 'Board'],
+              ['agents', '◆', 'Agents'],
+              ['runs', '▶', 'Runs'],
+            ].map(([key, ico, label]) => (
+              <button
+                key={key}
+                className={screen === key && !current ? 'on' : ''}
+                onClick={() => { setScreen(key); setSelected(null) }}
+              >
+                <span className="ico">{ico}</span>
+                {label}
+                {key === 'overview' && waiting > 0 && <span className="badge">{waiting}</span>}
+              </button>
+            ))}
+          </div>
+          <div className="group">
+            <span className="eyebrow">Configure</span>
+            <button onClick={() => setSettings(true)}><span className="ico">⚙</span>Stages</button>
+            <button onClick={() => setSheet(true)}><span className="ico">▤</span>Repositories</button>
+          </div>
+        </nav>
+
+        <div className="pane">
+          {!workspace ? (
+            <FirstRun onCreate={(name) => act(async () => {
+              const created = await api.createWorkspace(name)
+              setWorkspaceId(created.id)
+              setSheet(true)
+            })} />
+          ) : current ? (
+            <Detail
+              feature={current}
+              logs={logs[current.id] ?? []}
+              connected={connected}
+              tab={tab} setTab={setTab}
+              diff={diff} evidence={evidence}
+              onBack={() => setSelected(null)}
+              act={act}
+              onDiscard={() => setSelected(null)}
+            />
+          ) : screen === 'board' ? (
+            <div className="pane-inner">
+              <div className="pane-head">
+                <h2>Board</h2>
+                <span className="sub">Cards move themselves — the column is where the run actually got to.</span>
+              </div>
+              {features.length === 0
+                ? <Blank title="Nothing on the board" body="Describe a feature on Overview and it appears here." />
+                : <Board features={features} onOpen={(id) => setSelected(id)} />}
+            </div>
+          ) : screen === 'agents' ? (
+            <div className="pane-inner mid">
+              <div className="pane-head">
+                <h2>Agents</h2>
+                <span className="sub">Every session Drove has run, and how to reopen it.</span>
+              </div>
+              <Agents agents={agents} />
+            </div>
+          ) : screen === 'runs' ? (
+            <div className="pane-inner mid">
+              <div className="pane-head">
+                <h2>Runs</h2>
+                <span className="sub">What Drove actually did, and what it cost.</span>
+              </div>
+              <Runs runs={runs} onOpen={(id) => setSelected(id)} />
+            </div>
+          ) : (
+            <div className="pane-inner narrow">
+              <div className="hero">
+                <h1>What do you want built?</h1>
+                {!ready && <p className="sub">Add a repository first — {workspace.name} has none.</p>}
+                <div className="prompt">
+                  <textarea
+                    rows={2}
+                    placeholder={ready ? "Describe it the way you would to a colleague…" : 'Add a repository to begin'}
+                    value={task}
+                    disabled={!ready}
+                    onChange={(e) => setTask(e.target.value)}
+                    onKeyDown={(e) => { if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) create() }}
+                  />
+                  <div className="foot">
+                    <span className="kbd">Cmd + Enter</span>
+                    <span className="grow" />
+                    <button className="primary" onClick={create} disabled={!task.trim() || !ready}>
+                      Plan it
+                    </button>
+                  </div>
                 </div>
               </div>
+
+              <PipelineStrip workspace={workspace} onConfigure={() => setSettings(true)} />
+
+              {active.length > 0 && (
+                <>
+                  <div className="strip"><span className="eyebrow">In flight</span><span className="rule" /></div>
+                  {active.map((f) => <FeatureCard key={f.id} feature={f} onOpen={setSelected} />)}
+                </>
+              )}
+
+              {settled.length > 0 && (
+                <>
+                  <div className="strip"><span className="eyebrow">Done</span><span className="rule" /></div>
+                  {settled.slice(0, 5).map((f) => <FeatureCard key={f.id} feature={f} onOpen={setSelected} />)}
+                  {settled.length > 5 && (
+                    <button className="ghost tiny" onClick={() => setScreen('board')}>
+                      see all {features.length} on the board →
+                    </button>
+                  )}
+                </>
+              )}
             </div>
-
-            {active.length > 0 && (
-              <>
-                <div className="strip"><span className="eyebrow">In flight</span><span className="rule" /></div>
-                {active.map((f) => <FeatureCard key={f.id} feature={f} onOpen={setSelected} />)}
-              </>
-            )}
-
-            {settled.length > 0 && (
-              <>
-                <div className="strip"><span className="eyebrow">Done</span><span className="rule" /></div>
-                {settled.map((f) => <FeatureCard key={f.id} feature={f} onOpen={setSelected} />)}
-              </>
-            )}
-
-            {features.length === 0 && ready && (
-              <p style={{ color: 'var(--text-3)', fontSize: 13, textAlign: 'center', marginTop: 8 }}>
-                Nothing yet. {workspace.harness.plan} will read your code and write a plan for you
-                to approve before anything is changed.
-              </p>
-            )}
-          </div>
-        )}
+          )}
+        </div>
       </div>
+
+      <footer className="statusbar">
+        <span className={running > 0 ? 'sb-live' : ''}>
+          <b>{running}</b> running
+        </span>
+        <span className={waiting > 0 ? 'sb-gate' : ''}>
+          <b>{waiting}</b> awaiting you
+        </span>
+        <span><b>{features.length}</b> features</span>
+        <span><b>{runs.length}</b> runs</span>
+        {spend > 0 && <span><b>${spend.toFixed(2)}</b> spent</span>}
+        <span className="grow" />
+        <span>{connected ? 'engine connected' : 'reconnecting…'}</span>
+      </footer>
     </div>
   )
 }

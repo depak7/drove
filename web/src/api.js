@@ -36,6 +36,8 @@ export const api = {
 
   workspaces: () => get('/api/workspaces'),
   harnesses: () => get('/api/harnesses'),
+  runs: (ws) => get(`/api/workspaces/${ws}/runs`),
+  agents: (ws) => get(`/api/workspaces/${ws}/agents`),
   saveSettings: (id, harness, models) =>
     fetch(`/api/workspaces/${id}/settings`, {
       method: 'PUT',

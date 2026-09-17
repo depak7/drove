@@ -123,9 +123,9 @@ app.whenReady().then(async () => {
     if (busy) pulseWindow.showInactive();
     else pulseWindow.hide();
   });
+  const up = await waitForEngine();
   createWindow();
   createPulse();
-  const up = await waitForEngine();
   if (!up) {
     dialog.showErrorBox(
       "The engine did not start",
@@ -135,10 +135,10 @@ Try running \`drove serve\` in a terminal to see the error.`
     );
   }
 });
-app.on("before-quit", () => engine?.kill());
 app.on("activate", () => {
   if (BrowserWindow.getAllWindows().length === 0) createWindow();
 });
+app.on("before-quit", () => engine?.kill());
 app.on("window-all-closed", () => {
   if (process.platform !== "darwin") app.quit();
 });
