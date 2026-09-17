@@ -191,7 +191,9 @@ export default function App() {
       <div className="work">
         <nav className="nav">
           <div className="group">
-            <span className="eyebrow">Workspace</span>
+            {/* The workspace's own name heads its screens; a generic "Workspace" label here
+                just repeated the switcher sitting directly above it. */}
+            <span className="eyebrow">{workspace?.name ?? 'Workspace'}</span>
             {[
               ['overview', '◉', 'Overview'],
               ['board', '▦', 'Board'],
@@ -212,7 +214,8 @@ export default function App() {
           <div className="group">
             <span className="eyebrow">Configure</span>
             <button onClick={() => setSettings(true)}><span className="ico">⚙</span>Stages</button>
-            <button onClick={() => setSheet(true)}><span className="ico">▤</span>Repositories</button>
+            {/* This sheet manages the workspace itself — its name and which repos are in it. */}
+            <button onClick={() => setSheet(true)}><span className="ico">▤</span>Workspace</button>
           </div>
         </nav>
 
