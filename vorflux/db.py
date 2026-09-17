@@ -59,7 +59,32 @@ MIGRATIONS: list[str] = [
     );
     CREATE INDEX runs_by_feature ON runs(feature_id, iteration);
     """,
+    # 2 — workspaces. A workspace is a named set of repos worked on together, so a feature can
+    # change an API in one repo and its caller in another. Schema only; existing rows are
+    # backfilled by _backfill_workspaces, because deriving a repo's name from its path is a
+    # basename operation and SQLite has no clean way to express one.
+    """
+    CREATE TABLE workspaces (
+        id         TEXT PRIMARY KEY,
+        name       TEXT NOT NULL,
+        harness    TEXT,
+        created_at REAL NOT NULL
+    );
+    CREATE TABLE workspace_repos (
+        workspace_id TEXT NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
+        path         TEXT NOT NULL,
+        name         TEXT NOT NULL,
+        base_branch  TEXT NOT NULL,
+        added_at     REAL NOT NULL,
+        PRIMARY KEY (workspace_id, path)
+    );
+    ALTER TABLE features ADD COLUMN workspace_id TEXT REFERENCES workspaces(id);
+    CREATE INDEX features_by_workspace ON features(workspace_id);
+    """,
 ]
+
+# Data migrations that need real code. Keyed by the schema version they run after.
+AFTER: dict[int, str] = {2: "_backfill_workspaces"}
 
 
 def path() -> Path:
@@ -91,8 +116,31 @@ def migrate(conn: sqlite3.Connection) -> None:
     version = conn.execute("PRAGMA user_version").fetchone()[0]
     for index, sql in enumerate(MIGRATIONS[version:], start=version + 1):
         conn.executescript(sql)
+        if step := AFTER.get(index):
+            globals()[step](conn)
         conn.execute(f"PRAGMA user_version = {index}")
     conn.commit()
+
+
+def _backfill_workspaces(conn: sqlite3.Connection) -> None:
+    """Give every pre-workspace feature the one-repo workspace it always implicitly had."""
+    rows = conn.execute("SELECT DISTINCT repo, base_branch FROM features").fetchall()
+    for row in rows:
+        repo = Path(row["repo"])
+        workspace_id = new_id()
+        now = time.time()
+        conn.execute(
+            "INSERT INTO workspaces (id, name, harness, created_at) VALUES (?,?,?,?)",
+            (workspace_id, repo.name or str(repo), None, now),
+        )
+        conn.execute(
+            "INSERT INTO workspace_repos (workspace_id, path, name, base_branch, added_at)"
+            " VALUES (?,?,?,?,?)",
+            (workspace_id, str(repo), repo.name or "repo", row["base_branch"], now),
+        )
+        conn.execute(
+            "UPDATE features SET workspace_id = ? WHERE repo = ?", (workspace_id, str(repo))
+        )
 
 
 def new_id() -> str:
@@ -109,14 +157,18 @@ def create_feature(
     worktree: Path,
     base: str,
     feature_id: str | None = None,
+    workspace_id: str | None = None,
 ) -> str:
     # The caller usually mints the id first, because the worktree path is derived from it and
     # must exist before there is anything worth recording.
     feature_id = feature_id or new_id()
     conn.execute(
         "INSERT INTO features (id, repo, title, branch, worktree_path, base_branch, status,"
-        " created_at) VALUES (?,?,?,?,?,?,?,?)",
-        (feature_id, str(repo), title, branch, str(worktree), base, "planning", time.time()),
+        " created_at, workspace_id) VALUES (?,?,?,?,?,?,?,?,?)",
+        (
+            feature_id, str(repo), title, branch, str(worktree), base, "planning", time.time(),
+            workspace_id,
+        ),
     )
     return feature_id
 
@@ -227,3 +279,67 @@ def last_session(conn: sqlite3.Connection, feature_id: str, stage: str) -> sqlit
         " ORDER BY r.iteration DESC, s.attempt DESC LIMIT 1",
         (feature_id, stage),
     ).fetchone()
+
+
+# --- workspaces -------------------------------------------------------------------------------
+
+def create_workspace(conn: sqlite3.Connection, name: str, harness: dict | None = None) -> str:
+    workspace_id = new_id()
+    conn.execute(
+        "INSERT INTO workspaces (id, name, harness, created_at) VALUES (?,?,?,?)",
+        (workspace_id, name, json.dumps(harness) if harness else None, time.time()),
+    )
+    return workspace_id
+
+
+def add_repo(
+    conn: sqlite3.Connection, workspace_id: str, path: Path, name: str, base: str
+) -> None:
+    conn.execute(
+        "INSERT OR REPLACE INTO workspace_repos (workspace_id, path, name, base_branch, added_at)"
+        " VALUES (?,?,?,?,?)",
+        (workspace_id, str(path), name, base, time.time()),
+    )
+
+
+def remove_repo(conn: sqlite3.Connection, workspace_id: str, path: Path) -> None:
+    conn.execute(
+        "DELETE FROM workspace_repos WHERE workspace_id = ? AND path = ?",
+        (workspace_id, str(path)),
+    )
+
+
+def get_workspace(conn: sqlite3.Connection, workspace_id: str) -> sqlite3.Row | None:
+    return conn.execute("SELECT * FROM workspaces WHERE id = ?", (workspace_id,)).fetchone()
+
+
+def find_workspace(conn: sqlite3.Connection, ref: str) -> sqlite3.Row | None:
+    row = get_workspace(conn, ref)
+    if row:
+        return row
+    return conn.execute(
+        "SELECT * FROM workspaces WHERE id LIKE ? OR name = ? ORDER BY created_at LIMIT 1",
+        (f"{ref}%", ref),
+    ).fetchone()
+
+
+def list_workspaces(conn: sqlite3.Connection) -> list[sqlite3.Row]:
+    return conn.execute("SELECT * FROM workspaces ORDER BY created_at").fetchall()
+
+
+def workspace_repos(conn: sqlite3.Connection, workspace_id: str) -> list[sqlite3.Row]:
+    return conn.execute(
+        "SELECT * FROM workspace_repos WHERE workspace_id = ? ORDER BY added_at",
+        (workspace_id,),
+    ).fetchall()
+
+
+def delete_workspace(conn: sqlite3.Connection, workspace_id: str) -> None:
+    conn.execute("DELETE FROM workspaces WHERE id = ?", (workspace_id,))
+
+
+def features_in(conn: sqlite3.Connection, workspace_id: str) -> list[sqlite3.Row]:
+    return conn.execute(
+        "SELECT * FROM features WHERE workspace_id = ? ORDER BY created_at DESC",
+        (workspace_id,),
+    ).fetchall()
