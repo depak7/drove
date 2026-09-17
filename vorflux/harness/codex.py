@@ -20,7 +20,6 @@ from collections.abc import AsyncIterator
 from pathlib import Path
 from typing import Any
 
-from vorflux import pricing
 from vorflux.events import (
     AssistantText,
     FileChanged,
@@ -202,15 +201,13 @@ class CodexHarness:
                 except json.JSONDecodeError:
                     pass
 
-            cost = pricing.estimate(
-                spec.model, totals["in"], totals["out"], totals["cr"], totals["cw"]
-            )
             yield Result(
                 ok=failed is None,
                 final_text=final_text,
                 structured=structured,
                 session_id=session_id,
-                cost_usd=cost,
-                cost_is_estimate=cost is not None,
+                tokens_in=totals["in"],
+                tokens_out=totals["out"],
+                cache_read_tokens=totals["cr"],
                 error=failed,
             )

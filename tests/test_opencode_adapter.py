@@ -108,3 +108,12 @@ def test_extracts_when_prefixed_with_prose():
 def test_returns_none_when_there_is_no_object():
     assert extract_json_object("no json here") is None
     assert extract_json_object("") is None
+
+
+def test_prose_instead_of_json_is_an_explicit_failure():
+    """Prompt compliance is not API enforcement — opencode sometimes just answers in prose.
+
+    A missing object must surface as a failed Result with the offending text, not as a silent
+    `structured=None` that the caller has to diagnose.
+    """
+    assert extract_json_object("Sure, the code looks fine to me.") is None

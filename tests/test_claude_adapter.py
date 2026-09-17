@@ -54,8 +54,8 @@ def test_terminal_result_is_last_and_structured():
     result = events[-1]
     assert isinstance(result, Result)
     assert result.ok
-    assert result.cost_usd is not None and result.cost_usd > 0
-    assert not result.cost_is_estimate, "claude reports real cost; never mark it an estimate"
+    assert result.cost_usd is not None and result.cost_usd > 0, "claude reports real cost"
+    assert result.tokens_in > 0 and result.cache_read_tokens > 0
     assert result.structured is not None, "--json-schema output must parse into an object"
     PlanDoc.model_validate(result.structured)
 

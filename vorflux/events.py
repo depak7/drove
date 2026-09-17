@@ -108,10 +108,17 @@ class Result(_Event):
     final_text: str = ""
     structured: dict[str, Any] | None = None
     session_id: str | None = None
-    cost_usd: float | None = None
-    cost_is_estimate: bool = False
     duration_ms: int | None = None
     error: str | None = None
+
+    # Totals for this invocation (the sum of its Usage deltas). Tokens are exact everywhere;
+    # dollars are not — only Claude Code reports a cost, and on subscription auth the marginal
+    # cost of a turn really is zero, which is why opencode reports 0. So cost_usd stays None for
+    # harnesses that do not report one rather than carrying a guess.
+    tokens_in: int = 0
+    tokens_out: int = 0
+    cache_read_tokens: int = 0
+    cost_usd: float | None = None
 
 
 HarnessEvent = Annotated[

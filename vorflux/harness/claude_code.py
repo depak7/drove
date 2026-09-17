@@ -169,13 +169,16 @@ def _result(p: dict[str, Any]) -> Result:
             pass
 
     errors = p.get("errors") or []
+    u = p.get("usage", {}) or {}
     return Result(
         ok=not p.get("is_error", False),
         final_text=text,
         structured=structured,
         session_id=p.get("session_id"),
+        tokens_in=u.get("input_tokens", 0) or 0,
+        tokens_out=u.get("output_tokens", 0) or 0,
+        cache_read_tokens=u.get("cache_read_input_tokens", 0) or 0,
         cost_usd=p.get("total_cost_usd"),
-        cost_is_estimate=False,
         duration_ms=p.get("duration_ms"),
         error="; ".join(str(e) for e in errors) if errors else None,
     )

@@ -90,3 +90,17 @@ def test_live_structured_output_round_trip(name, tmp_path):
     assert result.session_id
     assert result.structured is not None
     ReviewVerdict.model_validate(result.structured)
+
+
+@pytest.mark.parametrize("name", NAMES)
+def test_result_carries_token_totals_but_never_a_guessed_cost(name):
+    """Tokens are exact everywhere; dollars only when the harness itself reports them.
+
+    Only Claude Code returns a cost. Codex reports tokens alone, and opencode reports 0 under
+    subscription auth — where the marginal cost of a turn genuinely is zero. Inventing a number
+    from a per-model price table would be a confident guess, so the field stays None instead.
+    """
+    result = Result(kind="result")
+    assert result.tokens_in == 0 and result.tokens_out == 0
+    assert result.cost_usd is None
+    assert not hasattr(result, "cost_is_estimate")

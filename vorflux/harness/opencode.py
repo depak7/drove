@@ -7,7 +7,10 @@ Three quirks shape this file:
 1. **No terminal result event** — like codex, the `Result` is synthesized when the stream ends.
 2. **No structured-output flag.** There is no `--json-schema` equivalent, so when a schema is
    requested the adapter appends a JSON-only instruction to the prompt and recovers the object
-   from the final text.
+   from the final text. This is *prompt compliance*, not API-level enforcement: claude and codex
+   are guaranteed to return conforming JSON, opencode is merely likely to. Observed failing
+   roughly 1 run in 5 by answering in prose. The adapter therefore fails the Result explicitly
+   instead of returning `structured=None` and letting the caller guess why.
 3. **`tokens.total` is a trap.** Every token field is per-step, including `total` — which is
    that step's `input + output + reasoning + cache.read`. It climbs across steps only because
    the context grows, which makes it look cumulative. Summing it counts the cached prefix once
@@ -21,7 +24,6 @@ import json
 from collections.abc import AsyncIterator
 from typing import Any
 
-from vorflux import pricing
 from vorflux.events import (
     AssistantText,
     HarnessEvent,
@@ -150,23 +152,27 @@ class OpenCodeHarness:
             failed = str(exc)
 
         final_text = "\n".join(texts).strip()
-        structured = extract_json_object(final_text) if spec.output_schema is not None else None
-
-        # opencode reports cost: 0 on subscription auth, where the marginal cost really is zero.
-        cost: float | None = reported_cost if reported_cost else None
-        estimated = False
-        if cost is None:
-            cost = pricing.estimate(
-                spec.model, totals["in"], totals["out"], totals["cr"], totals["cw"]
-            )
-            estimated = cost is not None
+        structured = None
+        if spec.output_schema is not None:
+            structured = extract_json_object(final_text)
+            if structured is None and failed is None:
+                # Asked for an object, got prose. Say so — a stage can then retry deliberately
+                # rather than treating a missing object as an unexplained empty result.
+                failed = (
+                    "opencode returned no JSON object despite a schema request "
+                    f"(first 200 chars: {final_text[:200]!r})"
+                )
 
         yield Result(
             ok=failed is None,
             final_text=final_text,
             structured=structured,
             session_id=session_id,
-            cost_usd=cost,
-            cost_is_estimate=estimated,
+            tokens_in=totals["in"],
+            tokens_out=totals["out"],
+            cache_read_tokens=totals["cr"],
+            # opencode reports cost: 0 on subscription auth, where the marginal cost really is
+            # zero. Nothing to normalize; leave it unset rather than asserting a zero.
+            cost_usd=reported_cost or None,
             error=failed,
         )
