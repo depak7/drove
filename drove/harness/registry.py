@@ -6,12 +6,14 @@ commands are shown, never executed — we do not silently install someone's codi
 
 from __future__ import annotations
 
+import json
 import os
 import shutil
 import subprocess
 import tomllib
 from pathlib import Path
 from dataclasses import dataclass
+from typing import Any
 from typing import Literal
 
 from drove.harness.base import Harness
@@ -140,10 +142,7 @@ def available() -> dict[str, str | None]:
 
 
 def configured_model(name: str) -> str | None:
-    """Whatever the CLI is already set to use, so the UI can show a real default.
-
-    Only codex records this somewhere we can read; the others decide at runtime.
-    """
+    """Whatever the CLI is already set to use, so the UI can show a real default."""
     if name != "codex":
         return None
     config = Path.home() / ".codex" / "config.toml"
@@ -157,54 +156,88 @@ def configured_model(name: str) -> str | None:
     return str(model) if isinstance(model, str) else None
 
 
-def local_models() -> list[str]:
-    """Models served by a local runtime on this machine.
-
-    LM Studio is the one that exposes a listing (`lms ls`). Codex can drive these through
-    `--oss --local-provider lmstudio`, so they are real options, not decoration. Embeddings are
-    skipped — they cannot run an agent.
-    """
-    exe = which("lms")
-    if exe is None:
-        return []
+def _read_json(path: Path) -> Any:
     try:
-        proc = subprocess.run(
-            [exe, "ls"], capture_output=True, text=True, timeout=30, stdin=subprocess.DEVNULL
-        )
-    except (OSError, subprocess.SubprocessError):
-        return []
-    if proc.returncode != 0:
-        return []
-
-    models: list[str] = []
-    section = ""
-    for line in proc.stdout.splitlines():
-        stripped = line.strip()
-        if not stripped:
-            continue
-        head = stripped.split()[0].upper()
-        if head in ("LLM", "EMBEDDING"):
-            section = head
-            continue
-        if section != "LLM" or stripped.startswith("You have"):
-            continue
-        ident = stripped.split()[0]
-        if "/" in ident or "-" in ident:
-            models.append(ident)
-    return models
+        return json.loads(path.read_text())
+    except (OSError, json.JSONDecodeError):
+        return None
 
 
-def list_models(name: str) -> list[str]:
-    """Models this harness offers: enumerated when the CLI can, otherwise what we know works.
+def _claude_catalog() -> list[dict[str, str]]:
+    """Claude Code caches the model catalogue it was served.
 
-    Never a fabricated list. A stale hardcoded model id is worse than an empty picker, because the
-    run fails at spawn time with a provider error rather than at the point of choosing.
+    Read from disk rather than shelling out: enumerating models should never launch anything or
+    cost a round trip, and this is the same list the CLI itself offers.
     """
+    folder = Path.home() / ".claude" / "cache" / "model-catalog"
+    if not folder.is_dir():
+        return []
+    for file in sorted(folder.glob("*.json"), key=lambda f: f.stat().st_mtime, reverse=True):
+        data = _read_json(file)
+        models = (((data or {}).get("catalog") or {}).get("config") or {}).get("models")
+        if not isinstance(models, list):
+            continue
+        out = []
+        for m in models:
+            if not isinstance(m, dict) or not m.get("id"):
+                continue
+            out.append({
+                "id": str(m["id"]),
+                "label": str(m.get("short_name") or m.get("name") or m["id"]),
+                "note": str(m.get("description") or ""),
+            })
+        if out:
+            return out
+    return []
+
+
+def _codex_catalog() -> list[dict[str, str]]:
+    """Codex caches its catalogue too, with a visibility flag.
+
+    Entries marked `hide` are internal (an auto-review model, a reserve pool) — the CLI does not
+    offer them, so neither do we.
+    """
+    data = _read_json(Path.home() / ".codex" / "models_cache.json")
+    models = (data or {}).get("models")
+    if not isinstance(models, list):
+        return []
+    return [
+        {
+            "id": str(m["slug"]),
+            "label": str(m.get("display_name") or m["slug"]),
+            "note": str(m.get("description") or ""),
+        }
+        for m in models
+        if isinstance(m, dict) and m.get("slug") and m.get("visibility") != "hide"
+    ]
+
+
+def list_models(name: str) -> list[dict[str, str]]:
+    """Every model this harness can run, discovered rather than hardcoded.
+
+    Claude and Codex both cache their catalogue on disk, so this costs a file read and has no side
+    effects. That matters: an earlier version shelled out to `lms ls` to offer locally served
+    models, and `lms` *starts LM Studio* — merely opening the settings screen launched an
+    application. Those models were unusable anyway, because driving one through codex needs
+    `--oss --local-provider`, which this adapter does not pass; selecting one would have failed at
+    spawn. They are left out until that is actually supported.
+    """
+    if name == "claude":
+        if catalog := _claude_catalog():
+            return catalog
+        # The CLI has never cached a catalogue. These aliases are verified working.
+        return [{"id": m, "label": m, "note": ""} for m in ("opus", "sonnet", "haiku")]
+
+    if name == "codex":
+        catalog = _codex_catalog()
+        current = configured_model(name)
+        if current and not any(m["id"] == current for m in catalog):
+            catalog.insert(0, {"id": current, "label": current, "note": "from config.toml"})
+        return catalog
+
     preset = PRESETS.get(name)
     if preset is None:
         return []
-
-    models: list[str] = list(preset.known_models)
     if preset.list_models_cmd and (exe := which(preset.list_models_cmd[0])):
         try:
             proc = subprocess.run(
@@ -212,16 +245,11 @@ def list_models(name: str) -> list[str]:
                 capture_output=True, text=True, timeout=30, stdin=subprocess.DEVNULL,
             )
             if proc.returncode == 0:
-                found = [line.strip() for line in proc.stdout.splitlines() if line.strip()]
-                models = found or models
+                return [
+                    {"id": line.strip(), "label": line.strip(), "note": ""}
+                    for line in proc.stdout.splitlines()
+                    if line.strip()
+                ]
         except (OSError, subprocess.SubprocessError):
             pass
-
-    if (current := configured_model(name)) and current not in models:
-        models.insert(0, current)
-
-    # Codex is the one adapter that can drive a locally served model (--oss).
-    if name == "codex":
-        models.extend(m for m in local_models() if m not in models)
-
-    return models
+    return [{"id": m, "label": m, "note": ""} for m in preset.known_models]

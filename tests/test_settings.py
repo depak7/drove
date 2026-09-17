@@ -110,10 +110,38 @@ def test_no_model_flag_is_sent_when_none_is_chosen(state):
 
 # --- what the picker can honestly offer -------------------------------------------------
 
-def test_model_lists_are_enumerated_or_known_never_invented():
-    """opencode can list; the others cannot, so the UI falls back to free text."""
-    assert registry.list_models("claude") == ["opus", "sonnet", "haiku"]
+def test_model_lists_come_from_the_cli_catalogue_not_a_hardcoded_table():
+    """Both CLIs cache the catalogue they were served; read it rather than inventing one."""
+    for name in ("claude", "codex"):
+        models = registry.list_models(name)
+        assert models, f"{name} offered nothing"
+        for m in models:
+            assert m["id"] and m["label"]
+            assert isinstance(m["note"], str)
+
     assert registry.list_models("nope") == []
+
+
+def test_enumerating_models_never_launches_anything(monkeypatch):
+    """`lms ls` starts LM Studio, so opening the settings screen booted an application.
+
+    Those models were unusable anyway: driving one through codex needs --oss --local-provider,
+    which the adapter does not pass, so choosing one failed at spawn.
+    """
+    def explode(*args, **kwargs):
+        raise AssertionError(f"model discovery must not spawn a process: {args}")
+
+    monkeypatch.setattr(registry.subprocess, "run", explode)
+    assert registry.list_models("claude")
+    assert registry.list_models("codex")
+    assert not hasattr(registry, "local_models"), "the lms probe should be gone entirely"
+
+
+def test_codex_hides_its_internal_models():
+    """The cache marks an auto-review model and a reserve pool as `hide`; the CLI omits them."""
+    ids = {m["id"] for m in registry.list_models("codex")}
+    assert "codex-auto-review" not in ids
+    assert "gpt-reserve" not in ids
 
 
 def test_harness_endpoint_reports_what_each_one_can_do(client):

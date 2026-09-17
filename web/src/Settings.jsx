@@ -17,6 +17,9 @@ export function SettingsSheet({ workspace, onClose, onSave }) {
 
   const usable = harnesses.filter((h) => h.installed)
   const modelsFor = (name) => harnesses.find((h) => h.name === name)?.models ?? []
+  const noteFor = (name, id) => modelsFor(name).find((m) => m.id === id)?.note ?? ''
+
+  const missing = harnesses.filter((h) => !h.installed)
   const independent = harness.review !== harness.execute
 
   const save = async () => {
@@ -59,9 +62,19 @@ export function SettingsSheet({ workspace, onClose, onSave }) {
                 options={modelsFor(harness[key])}
                 onChange={(v) => setModels({ ...models, [key]: v })}
               />
+              {noteFor(harness[key], models[key]) && (
+                <span className="mnote">{noteFor(harness[key], models[key])}</span>
+              )}
             </div>
           </div>
         ))}
+
+        {missing.length > 0 && (
+          <div className="note">
+            Not installed: {missing.map((h) => h.name).join(', ')} — these cannot be chosen until
+            the CLI is on this machine.
+          </div>
+        )}
 
         {!independent && (
           <div className="note bad">
@@ -108,8 +121,12 @@ function ModelPicker({ value, options, onChange }) {
   return (
     <div className="freemodel">
       <select value={value} onChange={(e) => onChange(e.target.value)}>
-        <option value="">default</option>
-        {options.map((m) => <option key={m} value={m}>{m}</option>)}
+        <option value="">CLI default</option>
+        {options.map((m) => (
+          <option key={m.id} value={m.id} title={m.note}>
+            {m.label === m.id ? m.id : `${m.label} · ${m.id}`}
+          </option>
+        ))}
       </select>
       <button className="ghost tiny" onClick={() => setFree(true)} title="Type a model id">type</button>
     </div>

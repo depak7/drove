@@ -724,3 +724,4 @@ button.chain:hover { background: var(--surface-2); }
 .blank p { margin: 0; color: var(--text-3); font-size: 13px; }
 
 .browser-error { display: grid; gap: 8px; padding: 10px; border: 1px solid #FF5A4E40; border-radius: var(--radius-sm); background: var(--bad-soft); }
+.stagecfg .mnote { font-size: 11px; color: var(--text-3); line-height: 1.4; }
