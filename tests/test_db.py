@@ -82,3 +82,27 @@ def test_deleting_a_feature_cascades(conn):
     db.delete_feature(conn, fid)
     assert conn.execute("SELECT COUNT(*) FROM runs").fetchone()[0] == 0
     assert conn.execute("SELECT COUNT(*) FROM sessions").fetchone()[0] == 0
+
+
+def test_wal_lets_a_reader_work_during_a_write(tmp_path, monkeypatch):
+    """The CLI, the daemon and concurrent runs share one database file.
+
+    Under the default rollback journal an open write transaction blocks every reader, which
+    surfaces as the UI hanging while a run records a session.
+    """
+    monkeypatch.setattr(config, "HOME", tmp_path)
+    with db.connect() as c:
+        assert c.execute("PRAGMA journal_mode").fetchone()[0] == "wal"
+        fid = make_feature(c, "held open")
+
+    import sqlite3
+
+    writer = sqlite3.connect(db.path())
+    writer.execute("BEGIN IMMEDIATE")
+    writer.execute("UPDATE features SET status = 'executing' WHERE id = ?", (fid,))
+    try:
+        with db.connect() as reader:  # must not block or raise
+            assert reader.execute("SELECT COUNT(*) FROM features").fetchone()[0] == 1
+    finally:
+        writer.rollback()
+        writer.close()

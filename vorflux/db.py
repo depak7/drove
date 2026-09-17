@@ -73,6 +73,12 @@ def connect() -> Iterator[sqlite3.Connection]:
     conn = sqlite3.connect(db_path)
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA foreign_keys = ON")
+    # WAL lets readers proceed while a write is in flight. The CLI, the daemon and concurrent runs
+    # all share this one file, and under the default rollback journal a single write blocks every
+    # reader — which shows up as the UI hanging while a run records a session. WAL is persisted in
+    # the database header, so this is a one-time change that later connections inherit.
+    conn.execute("PRAGMA journal_mode = WAL")
+    conn.execute("PRAGMA synchronous = NORMAL")
     try:
         migrate(conn)
         yield conn
