@@ -151,6 +151,16 @@ export default function App() {
         <span className="grow" />
 
         {workspace && (
+          <div className="stats-centre">
+            <span className={running > 0 ? 'sb-live' : ''}><b>{running}</b> running</span>
+            <span className={waiting > 0 ? 'sb-gate' : ''}><b>{waiting}</b> needs you</span>
+            <span><b>{features.length}</b> {features.length === 1 ? 'feature' : 'features'}</span>
+            <span><b>{runs.length}</b> {runs.length === 1 ? 'run' : 'runs'}</span>
+            {spend > 0 && <span><b>${spend.toFixed(2)}</b> spent</span>}
+          </div>
+        )}
+
+        {workspace && (
           <button className="settings-btn" onClick={() => setSettings(true)} title="Choose the harness and model for each stage">
             <span className="gear">⚙</span> Stages
           </button>
@@ -332,19 +342,6 @@ export default function App() {
         </div>
       </div>
 
-      <footer className="statusbar">
-        <span className={running > 0 ? 'sb-live' : ''}>
-          <b>{running}</b> running
-        </span>
-        <span className={waiting > 0 ? 'sb-gate' : ''}>
-          <b>{waiting}</b> needs you
-        </span>
-        <span><b>{features.length}</b> features</span>
-        <span><b>{runs.length}</b> runs</span>
-        {spend > 0 && <span><b>${spend.toFixed(2)}</b> spent</span>}
-        <span className="grow" />
-        <span>{connected ? 'engine connected' : 'reconnecting…'}</span>
-      </footer>
     </div>
   )
 }

@@ -432,6 +432,7 @@ pre.block {
 
 /* top bar owns identity, workspace and repos */
 .topbar {
+  position: relative;
   display: flex; align-items: center; gap: 16px;
   height: 52px; padding: 0 18px;
   border-bottom: 1px solid var(--line);
@@ -647,16 +648,25 @@ button.chain:hover { background: var(--surface-2); }
 .pane-head h2 { margin: 0; font-size: 17px; font-weight: 620; letter-spacing: -.02em; }
 .pane-head .sub { color: var(--text-3); font-size: 12.5px; }
 
-/* status bar */
-.statusbar {
-  display: flex; align-items: center; gap: 18px;
-  height: 30px; padding: 0 16px;
-  border-top: 1px solid var(--line); background: var(--surface);
+/* Run stats, centred in the title bar.
+ *
+ * Absolutely positioned rather than flexed, so the group sits on the true centre of the window
+ * regardless of how wide the workspace name or the repo chips happen to be — a centre that
+ * shifts when you rename a workspace does not read as centred at all. */
+.stats-centre {
+  position: absolute; left: 50%; transform: translateX(-50%);
+  display: flex; align-items: center; gap: 16px;
   font-size: 11.5px; color: var(--text-3);
+  pointer-events: none;
+  white-space: nowrap;
 }
-.statusbar b { color: var(--text-2); font-weight: 600; }
-.statusbar .sb-live { color: var(--live); }
-.statusbar .sb-gate { color: var(--accent); }
+.stats-centre b { color: var(--text-2); font-weight: 600; }
+.stats-centre .sb-live { color: var(--live); }
+.stats-centre .sb-live b { color: var(--live); }
+.stats-centre .sb-gate { color: var(--accent); }
+.stats-centre .sb-gate b { color: var(--accent); }
+
+@media (max-width: 1100px) { .stats-centre { display: none; } }
 
 /* board */
 .board { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 10px; }
