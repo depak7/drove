@@ -173,3 +173,30 @@ async def test_each_stage_reports_itself(trees, solo, monkeypatch):
 
     assert seen[:3] == ["execute", "review", "fix"]
     assert "review" in seen[3:], "the second review round must report itself too"
+
+
+async def test_work_already_on_the_branch_is_still_reviewed(trees, solo, monkeypatch):
+    """A retry after a crash finds the job done and commits nothing. That is not "no changes".
+
+    Short-circuiting there stranded finished, unreviewed code on the branch and reported it as if
+    the agent had done nothing — which is what happened to a real run killed mid-execute.
+    """
+    calls = stub_stages(monkeypatch, [PASS], committed=False)
+
+    path = trees.by_name("api").path
+    (path / "done.py").write_text("already implemented\n")
+    git.git(path, "add", "-A")
+    git.git(path, "commit", "-qm", "work from the run that crashed")
+
+    outcome = await engine.run_cycle(PLAN, trees, solo, "run-1", "add a thing")
+
+    assert calls["review"] == [1], "existing work must still be judged"
+    assert outcome.status == "delivered"
+
+
+async def test_an_empty_branch_with_no_commit_really_is_no_changes(trees, solo, monkeypatch):
+    calls = stub_stages(monkeypatch, [PASS], committed=False)
+    outcome = await engine.run_cycle(PLAN, trees, solo, "run-1", "add a thing")
+
+    assert outcome.status == "no_changes"
+    assert calls["review"] == [], "nothing to review means nothing spent reviewing"

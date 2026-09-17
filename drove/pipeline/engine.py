@@ -73,10 +73,18 @@ async def run_cycle(
     outcome.sessions["execute"] = executed.session_id
     account(executed.cost_usd, executed.tokens_in, executed.tokens_out)
 
-    if not executed.committed:
+    # "This invocation committed nothing" is not the same as "the branch holds nothing". A retry
+    # after a crashed run finds the work already done and rightly adds nothing — and skipping
+    # review there would strand finished, unreviewed code on the branch and report it as if the
+    # agent had done nothing at all.
+    standing = trees_mod.touched(trees)
+    if not executed.committed and not standing:
         outcome.status = "no_changes"
-        outcome.note = "the executor made no changes"
+        outcome.note = "the executor made no changes, and the branch has none"
         return _finish(outcome, costs, trees)
+
+    if not executed.committed:
+        report("review", "nothing new to build; reviewing what is already on the branch")
 
     # --- REVIEW / FIX ----------------------------------------------------------------------
     for attempt in range(1, MAX_FIX_ROUNDS + 1):
