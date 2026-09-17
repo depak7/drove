@@ -3,10 +3,9 @@
 base_branch = "main"
 
 [verify]
-# Commands run in the worktree after review passes. Omit what does not apply.
-# build = "npm run build"
-# test  = "npm test"
-# lint  = "npm run lint"
+# Run in the feature's worktree after review passes.
+test = "uv run --extra dev pytest -q"
+lint = "uv run --extra dev ruff check ."
 
 [harness]
 # Cross-harness by stage: whoever writes the code must not be the one who reviews it.

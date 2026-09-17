@@ -412,7 +412,7 @@ pre.block {
 .gatebar {
   position: sticky;
   bottom: 0;
-  margin: 18px -26px -60px;
+  margin: 18px -26px -94px;
   padding: 13px 26px 16px;
   background: linear-gradient(to bottom, #10131AE6, var(--surface));
   backdrop-filter: blur(12px);
@@ -435,4 +435,6 @@ pre.block {
 .picker .go { color: var(--text-3); font-size: 15px; }
 
 /* Leave room for the pinned gate so the last card is never hidden behind it. */
-.main-inner.gated { padding-bottom: 130px; }
+/* Must match the gate's negative bottom margin, or the bar floats above the pane
+   bottom at full scroll and leaves a dead strip under it. */
+.main-inner.gated { padding-bottom: 94px; }
