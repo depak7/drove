@@ -20,6 +20,7 @@ export default function App() {
   const [selected, setSelected] = useState(null)
   const [sheet, setSheet] = useState(false)
   const [screen, setScreen] = useState('overview')
+  const [harnesses, setHarnesses] = useState([])
   const [runs, setRuns] = useState([])
   const [agents, setAgents] = useState([])
   const [settings, setSettings] = useState(false)
@@ -63,6 +64,10 @@ export default function App() {
   )
 
   useEffect(() => { refresh() }, [refresh])
+
+  // Warm the harness capabilities in the background. Gathering them spawns processes, so doing it
+  // when the settings sheet opens showed a blank panel for about a second.
+  useEffect(() => { api.harnesses().then(setHarnesses).catch(() => {}) }, [])
   useEffect(() => { if (workspaceId) localStorage.setItem('drove.workspace', workspaceId) }, [workspaceId])
 
   const workspace = workspaces.find((w) => w.id === workspaceId) ?? null
@@ -168,6 +173,7 @@ export default function App() {
       {settings && workspace && (
         <SettingsSheet
           workspace={workspace}
+          harnesses={harnesses}
           onClose={() => setSettings(false)}
           onSave={(harness, models) => act(() => api.saveSettings(workspace.id, harness, models))}
         />

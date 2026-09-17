@@ -725,3 +725,12 @@ button.chain:hover { background: var(--surface-2); }
 
 .browser-error { display: grid; gap: 8px; padding: 10px; border: 1px solid #FF5A4E40; border-radius: var(--radius-sm); background: var(--bad-soft); }
 .stagecfg .mnote { font-size: 11px; color: var(--text-3); line-height: 1.4; }
+
+/* skeleton rows: a panel that is briefly incomplete beats a panel that is briefly empty */
+.skel {
+  display: block; height: 30px; border-radius: var(--radius-sm);
+  background: linear-gradient(90deg, var(--surface-3) 25%, var(--surface-2) 50%, var(--surface-3) 75%);
+  background-size: 220% 100%;
+  animation: shimmer 1.3s ease-in-out infinite;
+}
+@keyframes shimmer { 0% { background-position: 120% 0 } 100% { background-position: -20% 0 } }

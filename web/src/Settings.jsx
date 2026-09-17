@@ -7,13 +7,16 @@ const STAGES = [
   ['arbiter', 'Arbiter', 'Breaks a deadlock when review and execute disagree twice.'],
 ]
 
-export function SettingsSheet({ workspace, onClose, onSave }) {
-  const [harnesses, setHarnesses] = useState([])
+export function SettingsSheet({ workspace, harnesses: warmed, onClose, onSave }) {
+  const [harnesses, setHarnesses] = useState(warmed ?? [])
   const [harness, setHarness] = useState(workspace.harness)
   const [models, setModels] = useState(workspace.models ?? {})
   const [saving, setSaving] = useState(false)
 
-  useEffect(() => { api_harnesses().then(setHarnesses).catch(() => setHarnesses([])) }, [])
+  useEffect(() => {
+    if (warmed?.length) { setHarnesses(warmed); return }
+    api_harnesses().then(setHarnesses).catch(() => setHarnesses([]))
+  }, [warmed])
 
   const usable = harnesses.filter((h) => h.installed)
   const modelsFor = (name) => harnesses.find((h) => h.name === name)?.models ?? []
@@ -21,6 +24,8 @@ export function SettingsSheet({ workspace, onClose, onSave }) {
 
   const missing = harnesses.filter((h) => !h.installed)
   const independent = harness.review !== harness.execute
+
+  const loading = harnesses.length === 0
 
   const save = async () => {
     setSaving(true)
@@ -38,7 +43,14 @@ export function SettingsSheet({ workspace, onClose, onSave }) {
           <button className="ghost tiny" onClick={onClose}>esc</button>
         </div>
 
-        {STAGES.map(([key, label, why]) => (
+        {loading && STAGES.map(([key, label, why]) => (
+          <div className="stagecfg" key={`skel-${key}`}>
+            <div className="lbl"><b>{label}</b><span>{why}</span></div>
+            <div className="picks"><span className="skel" /><span className="skel" /></div>
+          </div>
+        ))}
+
+        {!loading && STAGES.map(([key, label, why]) => (
           <div className="stagecfg" key={key}>
             <div className="lbl">
               <b>{label}</b>
@@ -84,8 +96,10 @@ export function SettingsSheet({ workspace, onClose, onSave }) {
         )}
 
         <div className="srow-foot">
-          <span className="hint">Leave a model unset to use whatever that CLI defaults to.</span>
-          <button className="primary" onClick={save} disabled={saving}>
+          <span className="hint">
+            {loading ? 'Reading what each CLI offers…' : 'Leave a model unset to use whatever that CLI defaults to.'}
+          </span>
+          <button className="primary" onClick={save} disabled={saving || loading}>
             {saving ? 'Saving…' : 'Save'}
           </button>
         </div>

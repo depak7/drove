@@ -11,6 +11,7 @@ import asyncio
 import json
 import logging
 import shlex
+import time
 from contextlib import asynccontextmanager
 from importlib import resources
 from pathlib import Path
@@ -238,9 +239,20 @@ def delete_workspace(workspace_id: str) -> dict[str, bool]:
 
 # --- features ----------------------------------------------------------------------------------
 
+# Capabilities cost about a second to gather — opencode enumerates its models and checks auth by
+# spawning processes — and they change about as often as you install a CLI. Cache them so opening
+# the settings screen is instant rather than a blank second.
+_HARNESS_TTL = 60.0
+_harness_cache: tuple[float, list[dict[str, Any]]] | None = None
+
+
 @api.get("/harnesses")
-def harnesses() -> list[dict[str, Any]]:
+def harnesses(refresh: bool = False) -> list[dict[str, Any]]:
     """What can run a stage, and what each one can run on."""
+    global _harness_cache
+    if not refresh and _harness_cache and time.monotonic() - _harness_cache[0] < _HARNESS_TTL:
+        return _harness_cache[1]
+
     out = []
     for name, preset in registry.PRESETS.items():
         path = registry.which(preset.binary)
@@ -254,6 +266,7 @@ def harnesses() -> list[dict[str, Any]]:
             "models": registry.list_models(name) if path else [],
             "default_model": registry.configured_model(name),
         })
+    _harness_cache = (time.monotonic(), out)
     return out
 
 
