@@ -28,10 +28,25 @@ from vorflux.harness import registry
 from vorflux.vcs import git
 from vorflux.vcs import tree as trees_mod
 from vorflux.vcs.git import GitError
-from vorflux.vcs.worktree import WorktreeError
+from vorflux.vcs.tree import WorktreeError
 from vorflux.workspace import WorkspaceError
 
 api = APIRouter(prefix="/api")
+
+
+def _browse_root() -> Path:
+    """The local repository picker never exposes paths outside the user's home directory."""
+    return Path.home().resolve()
+
+
+def _browse_path(path: str | None) -> Path:
+    root = _browse_root()
+    candidate = (Path(path).expanduser() if path else root).resolve()
+    if candidate != root and root not in candidate.parents:
+        raise HTTPException(403, "repository picker is limited to your home directory")
+    if not candidate.is_dir():
+        raise HTTPException(404, "folder not found")
+    return candidate
 
 
 class NewWorkspace(BaseModel):
@@ -118,6 +133,37 @@ def health() -> dict[str, Any]:
 
 
 # --- workspaces --------------------------------------------------------------------------------
+
+
+@api.get("/repos/browse")
+def browse_repositories(path: str | None = None) -> dict[str, Any]:
+    """List local folders for the browser-based repository picker.
+
+    This is intentionally read-only and constrained to the current user's home directory. The
+    endpoint does not inspect files beyond whether a folder is a Git worktree.
+    """
+    folder = _browse_path(path)
+    root = _browse_root()
+    try:
+        children = sorted(
+            (
+                child
+                for child in folder.iterdir()
+                if child.is_dir() and not child.name.startswith(".")
+            ),
+            key=lambda child: child.name.lower(),
+        )[:200]
+    except OSError as exc:
+        raise HTTPException(400, f"cannot read folder: {exc}") from exc
+    return {
+        "path": str(folder),
+        "parent": str(folder.parent) if folder != root else None,
+        "root": str(root),
+        "entries": [
+            {"name": child.name, "path": str(child), "is_repo": (child / ".git").exists()}
+            for child in children
+        ],
+    }
 
 @api.get("/workspaces")
 def list_workspaces() -> list[dict[str, Any]]:
@@ -295,8 +341,13 @@ def read_evidence(feature_id: str) -> dict[str, Any]:
     for run in reversed(payload["runs"]):
         path = runs_dir(run["id"]) / "evidence.md"
         if path.exists():
-            return {"run_id": run["id"], "markdown": path.read_text()}
-    return {"run_id": None, "markdown": ""}
+            json_path = path.with_suffix(".json")
+            return {
+                "run_id": run["id"],
+                "markdown": path.read_text(),
+                "summary": json.loads(json_path.read_text()) if json_path.exists() else None,
+            }
+    return {"run_id": None, "markdown": "", "summary": None}
 
 
 @api.get("/events")

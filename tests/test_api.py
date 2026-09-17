@@ -35,6 +35,28 @@ def new_feature(client, ws, task="add a thing"):
 
 # --- workspaces --------------------------------------------------------------------------
 
+
+def test_repository_picker_lists_folders_and_marks_git_repositories(client, monkeypatch):
+    monkeypatch.setattr(server, "_browse_root", lambda: client.projects.resolve())
+    make_repo(client.projects, "api")
+    (client.projects / "notes").mkdir(parents=True)
+
+    body = client.get("/api/repos/browse").json()
+
+    assert body["path"] == str(client.projects.resolve())
+    assert [(entry["name"], entry["is_repo"]) for entry in body["entries"]] == [
+        ("api", True),
+        ("notes", False),
+    ]
+
+
+def test_repository_picker_refuses_paths_outside_its_root(client, monkeypatch, tmp_path):
+    monkeypatch.setattr(server, "_browse_root", lambda: client.projects.resolve())
+
+    response = client.get("/api/repos/browse", params={"path": str(tmp_path.resolve())})
+
+    assert response.status_code == 403
+
 def test_a_workspace_is_created_with_its_repos(client):
     ws = new_workspace(client, repos=("api", "web"))
 

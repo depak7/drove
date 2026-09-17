@@ -12,18 +12,26 @@ const MAX_LINES = 400
 export function useStream(onStatus) {
   const [connected, setConnected] = useState(false)
   const [logs, setLogs] = useState({})
+  const [stages, setStages] = useState({})
   const statusRef = useRef(onStatus)
   statusRef.current = onStatus
 
   useEffect(() => {
     const source = new EventSource('/api/events')
-    source.addEventListener('ready', () => setConnected(true))
+    source.addEventListener('ready', () => {
+      setConnected(true)
+      // Electron starts the local daemon alongside the renderer. Its first API request can race
+      // the daemon; reload state once the SSE connection proves the daemon is ready.
+      statusRef.current?.()
+    })
     source.onerror = () => setConnected(false)
     source.onmessage = (message) => {
       const event = JSON.parse(message.data)
       const { feature_id: id, kind } = event
 
       if (kind === 'status' || kind === 'done' || kind === 'plan') statusRef.current?.(event)
+      if (kind === 'stage') setStages((prev) => ({ ...prev, [id]: event.stage }))
+      if (kind === 'done') setStages((prev) => ({ ...prev, [id]: event.status }))
 
       const line = describe(event)
       if (!line) return
@@ -35,7 +43,7 @@ export function useStream(onStatus) {
     return () => source.close()
   }, [])
 
-  return { connected, logs }
+  return { connected, logs, stages }
 }
 
 function describe(event) {

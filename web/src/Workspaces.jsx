@@ -1,101 +1,126 @@
 import { useState } from 'react'
 
-/** Workspace picker plus repo management — this is how a repo gets added, from the app. */
+/** Workspace picker plus repo chips — this is how a repo gets added, from the app. */
 export function WorkspaceBar({ workspaces, current, onSelect, onCreate, onAddRepo, onRemoveRepo }) {
-  const [creating, setCreating] = useState(false)
-  const [name, setName] = useState('')
-  const [repoPath, setRepoPath] = useState('')
-  const [showRepos, setShowRepos] = useState(false)
+  const [mode, setMode] = useState(null) // 'workspace' | 'repo' | null
+  const [value, setValue] = useState('')
 
-  const create = () => {
-    const text = name.trim()
+  const submit = () => {
+    const text = value.trim()
     if (!text) return
-    setName('')
-    setCreating(false)
-    onCreate(text)
-  }
-
-  const addRepo = () => {
-    const path = repoPath.trim()
-    if (!path) return
-    setRepoPath('')
-    onAddRepo(path)
+    setValue('')
+    const was = mode
+    setMode(null)
+    if (was === 'workspace') onCreate(text)
+    else onAddRepo(text)
   }
 
   return (
     <div className="wsbar">
       <div className="wsrow">
-        <select
-          value={current?.id ?? ''}
-          onChange={(e) => onSelect(e.target.value)}
-          aria-label="Workspace"
-        >
+        <select value={current?.id ?? ''} onChange={(e) => onSelect(e.target.value)} aria-label="Workspace">
           {workspaces.length === 0 && <option value="">no workspaces</option>}
-          {workspaces.map((w) => (
-            <option key={w.id} value={w.id}>
-              {w.name} ({w.repos.length} repo{w.repos.length === 1 ? '' : 's'})
-            </option>
-          ))}
+          {workspaces.map((w) => <option key={w.id} value={w.id}>{w.name}</option>)}
         </select>
-        <button onClick={() => setCreating((v) => !v)} title="New workspace">+</button>
+        <button
+          className="ghost"
+          onClick={() => { setMode(mode === 'workspace' ? null : 'workspace'); setValue('') }}
+          title="New workspace"
+        >
+          +
+        </button>
       </div>
 
-      {creating && (
-        <div className="wsrow">
-          <input
-            autoFocus
-            placeholder="Workspace name"
-            value={name}
-            onChange={(e) => setName(e.target.value)}
-            onKeyDown={(e) => e.key === 'Enter' && create()}
-          />
-          <button className="primary" onClick={create}>Create</button>
+      {current && (
+        <div className="repochips">
+          {current.repos.map((repo) => (
+            <span className={`chip ${repo.exists ? '' : 'missing'}`} key={repo.path} title={repo.path}>
+              {repo.name}
+              <em style={{ color: 'var(--text-3)', fontStyle: 'normal' }}>{repo.base_branch}</em>
+              <span className="x" onClick={() => onRemoveRepo(repo.path)} title="Remove">×</span>
+            </span>
+          ))}
+          <span className="chip add" onClick={() => { setMode(mode === 'repo' ? null : 'repo'); setValue('') }}>
+            + repo
+          </span>
         </div>
       )}
 
-      {current && (
-        <>
-          <button className="linkish" onClick={() => setShowRepos((v) => !v)}>
-            {current.repos.length} repo{current.repos.length === 1 ? '' : 's'}
-            {showRepos ? ' ▾' : ' ▸'}
-          </button>
-
-          {showRepos && (
-            <div className="repolist">
-              {current.repos.map((repo) => (
-                <div className="repo" key={repo.path}>
-                  <div>
-                    <div className="mono">{repo.name}</div>
-                    <div className="path mono" title={repo.path}>
-                      {repo.base_branch}
-                      {repo.verify.length > 0 && ` · verify: ${repo.verify.join(', ')}`}
-                      {!repo.exists && ' · MISSING'}
-                    </div>
-                  </div>
-                  <button className="danger tiny" onClick={() => onRemoveRepo(repo.path)}>
-                    remove
-                  </button>
-                </div>
-              ))}
-              <div className="wsrow">
-                <input
-                  placeholder="/path/to/repo"
-                  value={repoPath}
-                  onChange={(e) => setRepoPath(e.target.value)}
-                  onKeyDown={(e) => e.key === 'Enter' && addRepo()}
-                />
-                <button onClick={addRepo} disabled={!repoPath.trim()}>Add</button>
-              </div>
-              {current.repos.length > 1 && (
-                <div className="note">
-                  A feature here may change several repos at once. Their branches have to be
-                  merged together — landing one without the others breaks things.
-                </div>
-              )}
-            </div>
-          )}
-        </>
+      {mode && (
+        <div className="wsrow">
+          <input
+            autoFocus
+            placeholder={mode === 'workspace' ? 'Workspace name' : '/path/to/repo'}
+            value={value}
+            onChange={(e) => setValue(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter') submit()
+              if (e.key === 'Escape') setMode(null)
+            }}
+          />
+          <button className="primary" onClick={submit} disabled={!value.trim()}>Add</button>
+        </div>
       )}
+
+      {current?.repos.length > 1 && (
+        <div className="note">A feature here may change several repos in one run.</div>
+      )}
+    </div>
+  )
+}
+
+/** Shown when nothing is selected — the old UI wasted this space on one line of grey text. */
+export function Overview({ workspace, features, onPick }) {
+  const by = (s) => features.filter((f) => f.status === s).length
+  const waiting = features.filter((f) => f.status === 'awaiting_approval')
+  const running = features.filter((f) => f.busy || ['executing', 'planning'].includes(f.status))
+
+  return (
+    <div className="main-inner">
+      <div className="dhead">
+        <h2>{workspace.name}</h2>
+      </div>
+      <div className="dmeta">
+        <span>{workspace.repos.length} repositor{workspace.repos.length === 1 ? 'y' : 'ies'}</span>
+        <span className="sep">·</span>
+        <span>{features.length} feature{features.length === 1 ? '' : 's'}</span>
+      </div>
+
+      <div className="stats">
+        <div className="stat"><div className="k">Awaiting you</div><div className="v">{by('awaiting_approval') + by('needs_human')}</div></div>
+        <div className="stat"><div className="k">Running</div><div className="v">{running.length}</div></div>
+        <div className="stat"><div className="k">Ready to merge</div><div className="v">{by('delivered')}</div></div>
+        <div className="stat"><div className="k">Landed</div><div className="v">{by('landed')}</div></div>
+      </div>
+
+      {waiting.length > 0 && (
+        <div className="card">
+          <h3 className="eyebrow">Waiting on your approval</h3>
+          {waiting.map((f) => (
+            <button
+              key={f.id}
+              className="frow"
+              onClick={() => onPick(f.id)}
+              style={{ padding: '9px 0', borderColor: 'transparent' }}
+            >
+              <div className="title">{f.title}</div>
+            </button>
+          ))}
+        </div>
+      )}
+
+      <div className="card">
+        <h3 className="eyebrow">How a run works</h3>
+        <p style={{ color: 'var(--text-2)', fontSize: 13 }}>
+          You describe a feature. <b style={{ color: 'var(--text)' }}>{workspace.harness.plan}</b> reads
+          the code and writes a plan for you to approve, edit or reject.{' '}
+          <b style={{ color: 'var(--text)' }}>{workspace.harness.execute}</b> implements it on an
+          isolated branch in every repo, then{' '}
+          <b style={{ color: 'var(--text)' }}>{workspace.harness.review}</b> — a different model —
+          reviews the diff without seeing how it was written. Your own tests run last. You get a
+          branch and an evidence pack; your working copy is never touched.
+        </p>
+      </div>
     </div>
   )
 }

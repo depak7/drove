@@ -11,8 +11,18 @@ from pathlib import Path
 
 from vorflux.config import slug
 from vorflux.vcs import git
-from vorflux.vcs.worktree import Teardown, WorktreeError
 from vorflux.workspace import Repo, Workspace
+
+
+class WorktreeError(RuntimeError):
+    """A worktree operation would be unsafe or cannot be completed."""
+
+
+@dataclass(frozen=True)
+class Teardown:
+    removed: bool
+    reason: str
+    recovery: str | None = None
 
 
 @dataclass(frozen=True)

@@ -12,6 +12,7 @@ const post = (url, body) =>
 
 export const api = {
   health: () => fetch('/api/health').then(json),
+  browseRepos: (path) => fetch(`/api/repos/browse${path ? `?path=${encodeURIComponent(path)}` : ''}`).then(json),
 
   workspaces: () => fetch('/api/workspaces').then(json),
   createWorkspace: (name, repos = []) => post('/api/workspaces', { name, repos }),

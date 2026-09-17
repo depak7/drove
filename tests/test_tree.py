@@ -94,6 +94,18 @@ def test_teardown_refuses_per_repo_independently(ws):
     assert web.path.exists()
 
 
+def test_teardown_refuses_uncommitted_work_per_repo(ws):
+    trees = tree.create(ws, "task-1")
+    api = trees.by_name("api")
+    (api.path / "scratch.txt").write_text("half-written agent edit")
+
+    result = tree.teardown(trees)["api"]
+
+    assert not result.removed
+    assert "uncommitted" in result.reason
+    assert api.path.exists()
+
+
 def test_landed_requires_every_changed_repo_to_be_merged(ws):
     """Half-merged is not delivered: calling it done is how the other half gets forgotten."""
     trees = tree.create(ws, "task-1")
@@ -134,3 +146,11 @@ def test_paths_never_escape_the_state_root(ws):
     root = (config.HOME / "worktrees").resolve()
     for hostile in ("../../../.ssh/authorized_keys", "/etc/passwd", "..", "a/../../x"):
         assert ws.feature_root(hostile).is_relative_to(root)
+
+
+def test_refuses_a_worktree_nested_inside_a_repository(ws, monkeypatch):
+    api = ws.repos[0]
+    monkeypatch.setattr(config, "HOME", api.path / ".state")
+
+    with pytest.raises(tree.WorktreeError, match="inside the repository"):
+        tree.create(ws, "task-1")
