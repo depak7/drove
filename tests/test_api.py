@@ -5,10 +5,10 @@ from __future__ import annotations
 import pytest
 from fastapi.testclient import TestClient
 
-from vorflux import config
-from vorflux.api import jobs, server
-from vorflux.api.bus import Bus
-from vorflux.vcs import git
+from drove import config
+from drove.api import jobs, server
+from drove.api.bus import Bus
+from drove.vcs import git
 
 from .conftest import make_repo
 
@@ -123,7 +123,7 @@ def test_creating_a_feature_makes_a_worktree_per_repo_and_starts_planning(client
     ws = new_workspace(client, repos=("api", "web"))
     feature = new_feature(client, ws)
 
-    assert feature["branch"].startswith("vf/")
+    assert feature["branch"].startswith("dv/")
     assert feature["workspace_id"] == ws["id"]
     assert client.started[0][0] == "plan"
 
@@ -226,7 +226,7 @@ async def test_subscribers_receive_published_events():
 
 async def test_a_stalled_subscriber_never_blocks_the_engine():
     """A backgrounded tab must not apply back-pressure to a run; drop its oldest events instead."""
-    from vorflux.api import bus as bus_module
+    from drove.api import bus as bus_module
 
     bus = Bus()
     with bus.subscribe() as queue:

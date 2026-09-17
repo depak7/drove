@@ -9,8 +9,8 @@ from __future__ import annotations
 
 from typer.testing import CliRunner
 
-from vorflux import __version__
-from vorflux.cli import app
+from drove import __version__
+from drove.cli import app
 
 runner = CliRunner()
 

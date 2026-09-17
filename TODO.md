@@ -1,7 +1,7 @@
-# vorflux-local — handoff
+# drove — handoff
 
 Written for an agent picking this up cold. Read this file, then `README.md`, then
-`vorflux/harness/base.py` and `vorflux/pipeline/engine.py` — those two carry the load.
+`drove/harness/base.py` and `drove/pipeline/engine.py` — those two carry the load.
 
 ## What it is
 
@@ -35,7 +35,7 @@ uv tool install --force --reinstall .   # --reinstall matters; --force alone reu
 uv run --extra dev pytest               # offline, no tokens
 uv run --extra dev pytest -m live       # hits the real CLIs, spends money
 uv run --extra dev ruff check .
-cd web && npm install && npm run build  # rebuilds the UI into vorflux/web/ (committed)
+cd web && npm install && npm run build  # rebuilds the UI into drove/web/ (committed)
 ```
 
 ---
@@ -43,9 +43,9 @@ cd web && npm install && npm run build  # rebuilds the UI into vorflux/web/ (com
 ## Orientation
 
 ```
-vorflux/
+drove/
   cli.py            typer commands: workspace, plan, execute, pivot, features, doctor, serve
-  config.py         ~/.vorflux paths, per-repo .vorflux.toml
+  config.py         ~/.drove paths, per-repo .drove.toml
   db.py             sqlite; versioned migrations, some with a Python step
   events.py         ★ the normalized harness event vocabulary
   workspace.py      ★ Workspace / Repo model
@@ -67,7 +67,7 @@ vorflux/
     server.py       REST + SSE
     jobs.py         background plan/cycle jobs
     bus.py          in-process pub/sub for SSE
-web/                React + Vite source; built assets are committed into vorflux/web/
+web/                React + Vite source; built assets are committed into drove/web/
 ```
 
 ---
@@ -113,7 +113,7 @@ Only `Teardown` and `WorktreeError` are still imported (by `tree.py` and `api/se
 - Move `Teardown` and `WorktreeError` into `vcs/tree.py`, delete the rest of `worktree.py`.
 - Delete `tests/test_worktree.py`. Check each test first: anything it covers that
   `tests/test_tree.py` does *not* should move across, not vanish.
-- **Done when:** `grep -rn "vcs.worktree" vorflux/ tests/` is empty and the suite is green.
+- **Done when:** `grep -rn "vcs.worktree" drove/ tests/` is empty and the suite is green.
 
 ### 1. The arbiter stage — designed, never built
 
@@ -184,7 +184,7 @@ Installed on this machine, listed in `registry.PLANNED`, honestly reported as un
 
 ### 7. Browser verification
 
-Deferred from v1. Vorflux's own pitch includes browser-based user-flow testing.
+Deferred from v1. Drove's own pitch includes browser-based user-flow testing.
 
 - New stage after `verify`: drive Playwright over flows named in `PlanDoc.test_plan`, capture
   screenshots into the evidence pack.
@@ -205,7 +205,7 @@ git tree.
 
 - PyPI + Trusted Publishing (GitHub Actions OIDC, no stored token), then a Homebrew tap with
   `brew services` for a launchd daemon.
-- **Rename before publishing.** "Vorflux" is a funded startup's product name. Fine as a local
+- **Rename before publishing.** "Drove" is a funded startup's product name. Fine as a local
   working title, not on a public registry.
 
 ---

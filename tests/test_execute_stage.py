@@ -2,10 +2,10 @@
 
 from __future__ import annotations
 
-from vorflux.pipeline.schemas import PlanDoc, PlanStep
-from vorflux.pipeline.stages import execute
-from vorflux.vcs import git
-from vorflux.vcs import tree as trees_mod
+from drove.pipeline.schemas import PlanDoc, PlanStep
+from drove.pipeline.stages import execute
+from drove.vcs import git
+from drove.vcs import tree as trees_mod
 
 PLAN = PlanDoc(
     summary="`test_calc.py` imports subtract, but calc.py does not define it, so collection fails.",

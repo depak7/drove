@@ -7,7 +7,7 @@ Research: None
 
 ## Problem Statement
 
-Vorflux already has a local engineering pipeline: a user selects a workspace of one or more
+Drove already has a local engineering pipeline: a user selects a workspace of one or more
 repositories, describes a feature, approves a plan, and receives a reviewed branch plus an
 evidence pack. Its current localhost UI exposes that capability, but it feels like an internal
 control panel: repository paths are pasted, feature state is terse, and the most important
@@ -22,7 +22,7 @@ later packaging decision, after the underlying pipeline and API are stable.
 
 ### Flow 1: Set up a workspace
 
-1. The user opens the local Vorflux web app.
+1. The user opens the local Drove web app.
 2. The user creates or selects a named workspace.
 3. The user chooses local Git repositories through a Mac-friendly repository picker.
 4. The app confirms the repositories, their base branches, availability, and verification setup.
@@ -64,7 +64,7 @@ later packaging decision, after the underlying pipeline and API are stable.
 
 ### In Scope
 
-- A cohesive, desktop-quality localhost web experience for existing Vorflux workspaces and
+- A cohesive, desktop-quality localhost web experience for existing Drove workspaces and
   features.
 - Persistent workspace navigation that makes selected repositories, repository health, base
   branches, verification setup, and feature counts easy to understand.
@@ -86,7 +86,7 @@ later packaging decision, after the underlying pipeline and API are stable.
   the stable API later.
 - Changes to the engineering pipeline's plan, execute, review, fix, verify, or evidence semantics
   — this milestone improves how existing behavior is understood and controlled.
-- Cloud accounts, hosted workspaces, remote repositories, or team collaboration — Vorflux remains
+- Cloud accounts, hosted workspaces, remote repositories, or team collaboration — Drove remains
   a local-first tool.
 - An in-app code editor, terminal emulator, or replacement for a developer's existing IDE.
 - GitHub PR creation and merge automation — these remain separate delivery roadmap work.
@@ -95,7 +95,7 @@ later packaging decision, after the underlying pipeline and API are stable.
 ## Technical Context
 
 - **Relevant architecture:** The React/Vite client in `web/` communicates with the local FastAPI
-  server in `vorflux/api/server.py`; both use the same workspace, feature, and run data maintained
+  server in `drove/api/server.py`; both use the same workspace, feature, and run data maintained
   by the Python application.
 - **Existing capabilities:** Workspaces already hold one or more Git repositories, and feature
   creation already creates isolated worktrees, starts planning, and exposes plan, live event,

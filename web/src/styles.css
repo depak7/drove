@@ -1,4 +1,4 @@
-/* vorflux design system
+/* drove design system
  *
  * A calm, dense instrument panel. The product is a pipeline, so the interface makes the pipeline
  * the thing you see first: every feature carries a five-segment rail showing where it got to.
@@ -10,40 +10,44 @@
  */
 
 :root {
-  /* surfaces — a real ramp, not three shades of the same grey */
-  --bg:           #0A0C10;
-  --surface:      #10131A;
-  --surface-2:    #161A22;
-  --surface-3:    #1C212B;
-  --line:         #232936;
-  --line-strong:  #303747;
+  /* surfaces — warm black with an oxblood tint, not neutral grey */
+  --bg:           #0B0809;
+  --surface:      #120D0E;
+  --surface-2:    #191212;
+  --surface-3:    #221818;
+  --line:         #2B1F1F;
+  --line-strong:  #3A2A29;
 
   /* ink */
-  --text:         #E8ECF3;
-  --text-2:       #98A2B3;
-  --text-3:       #646E80;
+  --text:         #F0E9E7;
+  --text-2:       #A79B98;
+  --text-3:       #6F6360;
 
   /* accent + semantics */
-  --accent:       #6E8BFF;
-  --accent-soft:  #6E8BFF1F;
-  --ok:           #3FD07E;
-  --ok-soft:      #3FD07E1A;
-  --warn:         #E8B339;
-  --warn-soft:    #E8B3391A;
-  --bad:          #FF6B6B;
-  --bad-soft:     #FF6B6B1A;
-  --live:         #45C8E8;
-  --live-soft:    #45C8E81A;
+  --accent:       #C0442F;
+  --accent-hi:    #E05539;
+  --accent-soft:  #C0442F26;
+  --ok:           #4FB980;
+  --ok-soft:      #4FB9801A;
+  --warn:         #D9A441;
+  --warn-soft:    #D9A4411A;
+  --bad:          #FF5A4E;
+  --bad-soft:     #FF5A4E1A;
+  --live:         #E0A93C;
+  --live-soft:    #D9A4411A;
 
-  /* pipeline stages — hue per stage so a rail reads without a legend */
-  --st-plan:      #8B95A8;
-  --st-execute:   #6E8BFF;
-  --st-review:    #B08CFF;
-  --st-verify:    #E8B339;
-  --st-deliver:   #3FD07E;
+  /* pipeline stages
+   * Work in progress is gold, finished is green, and red is reserved for failure alone. With a
+   * red brand the accent cannot also mean "running" — a rail showed rust for "implementing" and
+   * read as broken. */
+  --st-plan:      #8A7A76;
+  --st-execute:   #E0A93C;
+  --st-review:    #D99A3E;
+  --st-verify:    #C98B3C;
+  --st-deliver:   #4FB980;
 
-  --radius:       10px;
-  --radius-sm:    7px;
+  --radius:       12px;
+  --radius-sm:    8px;
   --mono: ui-monospace, "SF Mono", "JetBrains Mono", Menlo, monospace;
 
   color-scheme: dark;
@@ -87,8 +91,8 @@ button:disabled { opacity: .38; cursor: not-allowed; }
 
 button.primary {
   background: var(--accent);
-  border-color: var(--accent);
-  color: #0A0C10;
+  border-color: var(--accent-hi);
+  color: #FFF4F1;
   font-weight: 600;
 }
 button.primary:hover:not(:disabled) { filter: brightness(1.08); }
@@ -219,7 +223,7 @@ header.top {
 .rail.lg .seg { height: 4px; width: 34px; border-radius: 3px; }
 .rail .seg.done { background: var(--st-deliver); }
 .rail .seg.now  { background: var(--seg); animation: pulse 1.6s ease-in-out infinite; }
-.rail .seg.fail { background: var(--bad); }
+.rail .seg.fail { background: var(--bad); box-shadow: 0 0 0 2px var(--bad-soft); }
 
 @keyframes pulse { 0%,100% { opacity: 1 } 50% { opacity: .38 } }
 
@@ -240,12 +244,12 @@ header.top {
 }
 .pill i { width: 5px; height: 5px; border-radius: 50%; background: currentColor; }
 .pill.neutral  { color: var(--text-2); background: var(--surface-3); border-color: var(--line); }
-.pill.running  { color: var(--live);  background: var(--live-soft);  border-color: #45C8E840; }
+.pill.running  { color: var(--live);  background: var(--live-soft);  border-color: #D9A44140; }
 .pill.running i { animation: pulse 1.4s ease-in-out infinite; }
-.pill.gate     { color: var(--accent); background: var(--accent-soft); border-color: #6E8BFF40; }
-.pill.good     { color: var(--ok);   background: var(--ok-soft);   border-color: #3FD07E40; }
-.pill.attn     { color: var(--warn); background: var(--warn-soft); border-color: #E8B33940; }
-.pill.bad      { color: var(--bad);  background: var(--bad-soft);  border-color: #FF6B6B40; }
+.pill.gate     { color: var(--accent); background: var(--accent-soft); border-color: #C0442F40; }
+.pill.good     { color: var(--ok);   background: var(--ok-soft);   border-color: #4FB98040; }
+.pill.attn     { color: var(--warn); background: var(--warn-soft); border-color: #D9A44140; }
+.pill.bad      { color: var(--bad);  background: var(--bad-soft);  border-color: #FF5A4E40; }
 
 /* ---------- main ---------- */
 
@@ -305,7 +309,7 @@ header.top {
 .gate .row { display: flex; gap: 8px; align-items: center; margin-top: 10px; }
 
 pre.block {
-  background: #080A0D;
+  background: #070505;
   border: 1px solid var(--line);
   border-radius: var(--radius);
   padding: 14px 16px;
@@ -318,7 +322,7 @@ pre.block {
 }
 
 .log {
-  background: #080A0D; border: 1px solid var(--line); border-radius: var(--radius);
+  background: #070505; border: 1px solid var(--line); border-radius: var(--radius);
   padding: 12px 14px; height: 400px; overflow-y: auto;
   font-family: var(--mono); font-size: 12px; line-height: 1.65;
 }
@@ -329,8 +333,8 @@ pre.block {
 .log .warn { color: var(--warn); }
 .log .error { color: var(--bad); }
 
-.diff .add  { color: var(--ok); background: #3FD07E0D; }
-.diff .del  { color: var(--bad); background: #FF6B6B0D; }
+.diff .add  { color: var(--ok); background: #4FB9800D; }
+.diff .del  { color: var(--bad); background: #FF5A4E0D; }
 .diff .hunk { color: var(--accent); }
 .diff .meta { color: var(--text-3); }
 .diff .repo { color: var(--text); font-weight: 600; background: var(--surface-2); display: block; margin: 14px -16px 8px; padding: 6px 16px; }
@@ -371,7 +375,7 @@ pre.block {
 .chip.add:hover { color: var(--text); border-color: var(--accent); }
 .chip .x { color: var(--text-3); cursor: pointer; font-size: 13px; line-height: 1; }
 .chip .x:hover { color: var(--bad); }
-.chip.missing { color: var(--bad); border-color: #FF6B6B40; }
+.chip.missing { color: var(--bad); border-color: #FF5A4E40; }
 
 .note { font-size: 11.5px; color: var(--warn); line-height: 1.5; }
 
@@ -386,7 +390,7 @@ pre.block {
   bottom: 0;
   margin: 18px -26px -94px;
   padding: 13px 26px 16px;
-  background: linear-gradient(to bottom, #10131AE6, var(--surface));
+  background: linear-gradient(to bottom, #120D0EE6, var(--surface));
   backdrop-filter: blur(12px);
   border-top: 1px solid var(--accent);
   box-shadow: 0 -14px 28px -14px #00000090;
@@ -410,3 +414,114 @@ pre.block {
 /* Must match the gate's negative bottom margin, or the bar floats above the pane
    bottom at full scroll and leaves a dead strip under it. */
 .main-inner.gated { padding-bottom: 94px; }
+
+/* ============================================================================
+ * Command center
+ *
+ * The app opens on the thing you came to do: describe work. Everything else —
+ * which workspace, which repos, what is already running — arranges itself around
+ * that, rather than crowding a rail while the middle of the screen sits empty.
+ * ========================================================================== */
+
+.wordmark { display: inline-flex; align-items: center; gap: 8px; color: var(--accent); }
+.wordmark b { color: var(--text); font-size: 15px; font-weight: 650; letter-spacing: -.02em; }
+
+.shell { display: grid; grid-template-rows: auto 1fr; height: 100%; }
+
+/* top bar owns identity, workspace and repos */
+.topbar {
+  display: flex; align-items: center; gap: 16px;
+  height: 54px; padding: 0 20px;
+  border-bottom: 1px solid var(--line);
+  background: var(--surface);
+  -webkit-app-region: drag;
+}
+.topbar > * { -webkit-app-region: no-drag; }
+.topbar .ws {
+  display: flex; align-items: center; gap: 8px;
+  padding: 5px 10px 5px 12px;
+  background: var(--surface-2); border: 1px solid var(--line);
+  border-radius: 999px; font-size: 13px; font-weight: 550; cursor: pointer;
+}
+.topbar .ws:hover { border-color: var(--line-strong); }
+.topbar .ws .caret { color: var(--text-3); font-size: 10px; }
+.topbar .repos { display: flex; gap: 6px; align-items: center; min-width: 0; }
+.topbar .repos .chip { background: transparent; }
+
+/* the stage: a centered column that the prompt anchors */
+.stage { overflow-y: auto; }
+.stage-inner { max-width: 760px; margin: 0 auto; padding: 0 24px 80px; }
+
+.hero { padding: 64px 0 34px; text-align: center; }
+.hero h1 {
+  margin: 0 0 22px;
+  font-size: 25px; font-weight: 600; letter-spacing: -.03em;
+  color: var(--text);
+}
+.hero .sub { margin: -14px 0 24px; color: var(--text-3); font-size: 13px; }
+
+.prompt {
+  position: relative;
+  background: var(--surface);
+  border: 1px solid var(--line-strong);
+  border-radius: 14px;
+  padding: 14px 16px 12px;
+  text-align: left;
+  transition: border-color .14s ease, box-shadow .14s ease;
+}
+.prompt:focus-within { border-color: var(--accent); box-shadow: 0 0 0 4px var(--accent-soft); }
+.prompt textarea {
+  background: transparent; border: none; padding: 0; min-height: 62px;
+  font-size: 15px; line-height: 1.55;
+}
+.prompt textarea:focus { box-shadow: none; }
+.prompt .foot { display: flex; align-items: center; gap: 10px; margin-top: 10px; }
+.prompt .kbd {
+  font-size: 10.5px; color: var(--text-3); letter-spacing: .03em;
+  border: 1px solid var(--line); border-radius: 5px; padding: 3px 7px;
+  font-family: -apple-system, system-ui, sans-serif;
+}
+
+.strip { display: flex; align-items: center; gap: 10px; margin: 34px 0 12px; }
+.strip .rule { flex: 1; height: 1px; background: var(--line); }
+
+/* feature cards on the stage */
+.fcard {
+  display: block; width: 100%; text-align: left;
+  background: var(--surface); border: 1px solid var(--line);
+  border-radius: var(--radius); padding: 14px 16px; margin-bottom: 8px;
+}
+.fcard:hover { border-color: var(--line-strong); background: var(--surface-2); }
+.fcard.gate { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }
+.fcard .top { display: flex; align-items: flex-start; gap: 12px; }
+.fcard .title { flex: 1; font-size: 14px; font-weight: 520; line-height: 1.45; }
+.fcard .under { display: flex; align-items: center; gap: 10px; margin-top: 10px; }
+.fcard .iter { font-size: 11px; color: var(--text-3); }
+
+/* the detail view takes over the stage */
+.back {
+  display: inline-flex; align-items: center; gap: 7px;
+  background: none; border: none; padding: 18px 0 10px;
+  color: var(--text-3); font-size: 12.5px;
+}
+.back:hover { color: var(--text); background: none; }
+
+.stage-inner.wide { max-width: 940px; }
+
+/* workspace sheet */
+.sheet-scrim { position: fixed; inset: 0; background: #00000080; backdrop-filter: blur(3px); z-index: 40; }
+.sheet {
+  position: fixed; top: 58px; left: 20px; z-index: 41;
+  width: 340px; padding: 14px;
+  background: var(--surface-2); border: 1px solid var(--line-strong);
+  border-radius: var(--radius); box-shadow: 0 18px 40px -12px #000000C0;
+  display: grid; gap: 10px;
+}
+.sheet .ws-item {
+  display: flex; align-items: center; justify-content: space-between; gap: 8px;
+  width: 100%; text-align: left; background: none; border: 1px solid transparent;
+  border-radius: var(--radius-sm); padding: 8px 10px; font-size: 13px;
+}
+.sheet .ws-item:hover { background: var(--surface-3); }
+.sheet .ws-item.on { border-color: var(--accent); }
+.sheet .ws-item small { color: var(--text-3); font-size: 11px; }

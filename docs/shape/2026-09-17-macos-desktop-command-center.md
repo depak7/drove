@@ -1,4 +1,4 @@
-# Vorflux Desktop for macOS
+# Drove Desktop for macOS
 
 Created: 2026-09-17
 Category: UX
@@ -7,7 +7,7 @@ Research: Standard
 
 ## Problem Statement
 
-Vorflux needs to feel like a native Mac developer tool: choose an existing local repository,
+Drove needs to feel like a native Mac developer tool: choose an existing local repository,
 supervise a feature, and act on approvals without a browser tab or typed filesystem paths.
 
 ## Core User Flows
@@ -17,7 +17,7 @@ supervise a feature, and act on approvals without a browser tab or typed filesys
 1. User selects Add repository.
 2. macOS presents its native folder picker.
 3. User selects an existing Git repository.
-4. Vorflux validates and adds the original checkout; feature worktrees are created only later.
+4. Drove validates and adds the original checkout; feature worktrees are created only later.
 
 ### Supervise work
 

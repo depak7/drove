@@ -7,8 +7,8 @@ from pathlib import Path
 
 import pytest
 
-from vorflux import config, db, workspace
-from vorflux.vcs import git, tree
+from drove import config, db, workspace
+from drove.vcs import git, tree
 
 
 def make_repo(root: Path, name: str, default_branch: str = "main") -> Path:
@@ -49,7 +49,7 @@ def test_every_repo_gets_a_worktree_under_one_feature_root(ws):
     assert {t.repo.name for t in trees} == {"api", "web"}
     # Siblings under one root, so the agent can change both in a single change.
     assert {t.path.parent for t in trees} == {trees.root}
-    assert all(t.branch == "vf/task-1" for t in trees)
+    assert all(t.branch == "dv/task-1" for t in trees)
 
 
 def test_repos_stay_isolated_from_each_other(ws):
@@ -154,3 +154,20 @@ def test_refuses_a_worktree_nested_inside_a_repository(ws, monkeypatch):
 
     with pytest.raises(tree.WorktreeError, match="inside the repository"):
         tree.create(ws, "task-1")
+
+
+def test_an_explicit_branch_overrides_the_current_prefix(ws):
+    """Features created before the product was renamed keep the branch their commits are on.
+
+    The prefix is a constant, so changing it would otherwise strand every existing feature: the
+    worktree would be cut on a new branch while its work sat on the old one.
+    """
+    trees = tree.create(ws, "task-1", "vf/task-1")
+    assert all(t.branch == "vf/task-1" for t in trees)
+
+    commit_in(trees.by_name("api").path, "legacy.py")
+    assert git.branch_exists(trees.by_name("api").repo.path, "vf/task-1")
+
+    # Reopening with the same recorded branch finds the same work.
+    again = tree.create(ws, "task-1", "vf/task-1")
+    assert (again.by_name("api").path / "legacy.py").exists()

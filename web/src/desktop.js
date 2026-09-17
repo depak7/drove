@@ -5,7 +5,7 @@
  * when the bridge exists and quietly fall back when it does not, so nothing in the UI has to know
  * which shell it is running in.
  */
-const bridge = typeof window !== 'undefined' ? window.vorfluxDesktop : undefined
+const bridge = typeof window !== 'undefined' ? window.droveDesktop : undefined
 
 export const isDesktop = Boolean(bridge)
 

@@ -1,4 +1,4 @@
-# vorflux-local
+# Drove
 
 Local autonomous engineering pipeline. Describe a feature, approve one plan, and come back to a
 reviewed branch and an evidence pack — driven entirely by the coding CLIs you already have
@@ -20,21 +20,21 @@ The point is **cross-model review**: the harness that wrote the code never grade
 ## Install
 
 ```bash
-uv tool install git+https://github.com/<you>/vorflux-local
-cd ~/my-repo && vorflux init && vorflux doctor
+uv tool install git+https://github.com/<you>/drove
+cd ~/my-repo && drove init && drove doctor
 ```
 
 ## Use
 
 ```bash
-vorflux serve                                  # daemon + web UI on http://localhost:8787
+drove serve                                  # daemon + web UI on http://localhost:8787
                                                # create workspaces and add repos from the app
 
-vorflux workspace new product ~/code/api ~/code/web
-vorflux plan "rename greeting() and update its callers"
-vorflux execute <feature>                      # implement → review → fix → verify → evidence
-vorflux features                               # what exists and where it got to
-vorflux pivot <feature> "use a token bucket"   # change direction; keeps branches and agent memory
+drove workspace new product ~/code/api ~/code/web
+drove plan "rename greeting() and update its callers"
+drove execute <feature>                      # implement → review → fix → verify → evidence
+drove features                               # what exists and where it got to
+drove pivot <feature> "use a token bucket"   # change direction; keeps branches and agent memory
 ```
 
 The web UI and the CLI are two clients of the same engine and the same SQLite database — start a
@@ -42,7 +42,7 @@ feature in one and finish it in the other. The one thing the daemon adds is that
 becomes a state rather than a blocking prompt, so several features can sit waiting on you at once
 while others run.
 
-Each feature gets its own worktrees under `~/.vorflux/worktrees/<workspace>/<feature>/`, one per
+Each feature gets its own worktrees under `~/.drove/worktrees/<workspace>/<feature>/`, one per
 repo, side by side — so runs never collide and your own checkouts are never touched. A worktree is
 removed only once its commits are in that repo's base branch; unintegrated work is preserved and
 the recovery command printed, per repo independently.

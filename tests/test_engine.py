@@ -4,13 +4,13 @@ from __future__ import annotations
 
 import pytest
 
-from vorflux.pipeline import engine
-from vorflux.pipeline.schemas import BlockingIssue, PlanDoc, ReviewVerdict
-from vorflux.pipeline.stages import review as review_stage
-from vorflux.pipeline.stages.execute import ExecuteOutcome
-from vorflux.pipeline.stages.verify import Check, VerifyOutcome
-from vorflux.vcs import git
-from vorflux.vcs import tree as trees_mod
+from drove.pipeline import engine
+from drove.pipeline.schemas import BlockingIssue, PlanDoc, ReviewVerdict
+from drove.pipeline.stages import review as review_stage
+from drove.pipeline.stages.execute import ExecuteOutcome
+from drove.pipeline.stages.verify import Check, VerifyOutcome
+from drove.vcs import git
+from drove.vcs import tree as trees_mod
 
 PLAN = PlanDoc(summary="add a thing", acceptance_criteria=["it works"])
 PASS = ReviewVerdict(verdict="pass", summary="looks right")

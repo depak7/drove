@@ -7,8 +7,8 @@ from pathlib import Path
 
 import pytest
 
-from vorflux import config, db, workspace
-from vorflux.vcs import git
+from drove import config, db, workspace
+from drove.vcs import git
 
 
 def make_repo(root: Path, name: str, default_branch: str = "main") -> Path:

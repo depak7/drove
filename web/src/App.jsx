@@ -2,16 +2,19 @@ import { useCallback, useEffect, useState } from 'react'
 import { api } from './api'
 import { useStream } from './useStream'
 import { Diff, Gate, Log, Pill, Plan, Rail, StageLegend } from './components'
-import { Overview, WorkspaceBar } from './Workspaces'
+import { WorkspaceSheet } from './Workspaces'
+import { Mark, Wordmark } from './Logo'
 import { isDesktop, notify, setPulse } from './desktop'
 
 const PIVOTABLE = ['delivered', 'landed', 'needs_human', 'verify_failed', 'no_changes']
+const ACTIVE = ['planning', 'awaiting_approval', 'approved', 'executing', 'reviewing']
 
 export default function App() {
   const [workspaces, setWorkspaces] = useState([])
-  const [workspaceId, setWorkspaceId] = useState(() => localStorage.getItem('vorflux.workspace') ?? '')
+  const [workspaceId, setWorkspaceId] = useState(() => localStorage.getItem('drove.workspace') ?? '')
   const [features, setFeatures] = useState([])
   const [selected, setSelected] = useState(null)
+  const [sheet, setSheet] = useState(false)
   const [tab, setTab] = useState('plan')
   const [diff, setDiff] = useState(null)
   const [evidence, setEvidence] = useState('')
@@ -35,8 +38,8 @@ export default function App() {
     useCallback((event) => {
       refresh()
       if (event.kind !== 'status') return
-      // The point of a desktop app is not having to watch it. Only interrupt for the two states
-      // that actually need a person: a plan waiting on approval, and a run that stopped.
+      // The point of a desktop app is not having to watch it. Interrupt only for the two states
+      // that actually need a person.
       if (event.status === 'awaiting_approval') notify('Plan ready', 'A feature is waiting on your approval.')
       if (['needs_human', 'verify_failed', 'failed'].includes(event.status)) {
         notify('Run stopped', `A feature ended as ${event.status.replace(/_/g, ' ')}.`)
@@ -45,18 +48,19 @@ export default function App() {
   )
 
   useEffect(() => { refresh() }, [refresh])
-
-  // Keep the notch pulse in step with what is actually happening.
-  useEffect(() => {
-    if (!isDesktop) return
-    const running = features.filter((f) => f.busy).length
-    const waiting = features.filter((f) => f.status === 'awaiting_approval').length
-    setPulse({ running, waiting })
-  }, [features])
-  useEffect(() => { if (workspaceId) localStorage.setItem('vorflux.workspace', workspaceId) }, [workspaceId])
+  useEffect(() => { if (workspaceId) localStorage.setItem('drove.workspace', workspaceId) }, [workspaceId])
 
   const workspace = workspaces.find((w) => w.id === workspaceId) ?? null
   const current = features.find((f) => f.id === selected) ?? null
+  const ready = workspace?.repos.length > 0
+
+  useEffect(() => {
+    if (!isDesktop) return
+    setPulse({
+      running: features.filter((f) => f.busy).length,
+      waiting: features.filter((f) => f.status === 'awaiting_approval').length,
+    })
+  }, [features])
 
   useEffect(() => {
     if (!current) return
@@ -81,20 +85,39 @@ export default function App() {
     })
   }
 
-  const ready = workspace?.repos.length > 0
+  const active = features.filter((f) => f.busy || ACTIVE.includes(f.status))
+  const settled = features.filter((f) => !active.includes(f))
 
   return (
-    <div className="app">
-      <header className="top">
-        <div className="brand">
-          <b>vorflux</b>
-          <span>autopilot</span>
-        </div>
+    <div className="shell">
+      <header className="topbar">
+        <Wordmark />
+
+        {workspace && (
+          <button className="ws" onClick={() => setSheet(true)}>
+            {workspace.name}
+            <span className="caret">▾</span>
+          </button>
+        )}
+
+        {workspace && (
+          <div className="repos">
+            {workspace.repos.slice(0, 4).map((r) => (
+              <span className={`chip ${r.exists ? '' : 'missing'}`} key={r.path} title={r.path}>{r.name}</span>
+            ))}
+            {workspace.repos.length > 4 && <span className="chip">+{workspace.repos.length - 4}</span>}
+            {workspace.repos.length === 0 && (
+              <button className="ghost tiny" onClick={() => setSheet(true)}>+ add a repository</button>
+            )}
+          </div>
+        )}
+
         <span className="grow" />
+
         {workspace && (
           <div className="chain" title="Different models plan, implement and review">
             <span className="node">{workspace.harness.execute}</span>
-            <span className="arrow">implements →</span>
+            <span className="arrow">builds</span>
             <span className="node">{workspace.harness.review}</span>
             <span className="arrow">reviews</span>
           </div>
@@ -105,150 +128,197 @@ export default function App() {
       {workspace && !workspace.independent_review && (
         <div className="banner warn">
           {workspace.harness.execute} is set to review its own work — that is not an independent
-          review. Set a different <code>review</code> harness in <code>.vorflux.toml</code>.
+          review. Set a different <code>review</code> harness in <code>.drove.toml</code>.
         </div>
       )}
       {error && <div className="banner bad">{error}</div>}
 
-      <div className="body">
-        <aside className="sidebar">
-          <WorkspaceBar
-            workspaces={workspaces}
-            current={workspace}
-            onSelect={(id) => { setWorkspaceId(id); setSelected(null) }}
-            onCreate={(name) => act(async () => {
-              const created = await api.createWorkspace(name)
-              setWorkspaceId(created.id)
-            })}
-            onAddRepo={(path) => act(() => api.addRepo(workspaceId, path))}
-            onRemoveRepo={(path) => act(() => api.removeRepo(workspaceId, path))}
+      {sheet && (
+        <WorkspaceSheet
+          workspaces={workspaces}
+          current={workspace}
+          onClose={() => setSheet(false)}
+          onSelect={(id) => { setWorkspaceId(id); setSelected(null) }}
+          onCreate={(name) => act(async () => {
+            const created = await api.createWorkspace(name)
+            setWorkspaceId(created.id)
+          })}
+          onAddRepo={(path) => act(() => api.addRepo(workspaceId, path))}
+          onRemoveRepo={(path) => act(() => api.removeRepo(workspaceId, path))}
+        />
+      )}
+
+      <div className="stage">
+        {!workspace ? (
+          <FirstRun onCreate={(name) => act(async () => {
+            const created = await api.createWorkspace(name)
+            setWorkspaceId(created.id)
+            setSheet(true)
+          })} />
+        ) : current ? (
+          <Detail
+            feature={current}
+            logs={logs[current.id] ?? []}
+            connected={connected}
+            tab={tab} setTab={setTab}
+            diff={diff} evidence={evidence}
+            onBack={() => setSelected(null)}
+            act={act}
+            onDiscard={() => { setSelected(null) }}
           />
-
-          <div className="pad composer">
-            <textarea
-              rows={3}
-              placeholder={ready ? 'What do you want built?' : 'Add a repository first'}
-              value={task}
-              disabled={!ready}
-              onChange={(e) => setTask(e.target.value)}
-              onKeyDown={(e) => { if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) create() }}
-            />
-            <button className="primary" onClick={create} disabled={!task.trim() || !ready}>
-              Plan it
-            </button>
-          </div>
-
-          <div className="scroll">
-            <div className="section-head">
-              <span className="eyebrow">Features</span>
-              <span className="eyebrow">{features.length || ''}</span>
+        ) : (
+          <div className="stage-inner">
+            <div className="hero">
+              <h1>What do you want built?</h1>
+              {!ready && <p className="sub">Add a repository first — {workspace.name} has none.</p>}
+              <div className="prompt">
+                <textarea
+                  rows={2}
+                  placeholder={ready ? "Describe it the way you would to a colleague…" : 'Add a repository to begin'}
+                  value={task}
+                  disabled={!ready}
+                  onChange={(e) => setTask(e.target.value)}
+                  onKeyDown={(e) => { if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) create() }}
+                />
+                <div className="foot">
+                  <span className="kbd">Cmd + Enter</span>
+                  <span className="grow" />
+                  <button className="primary" onClick={create} disabled={!task.trim() || !ready}>
+                    Plan it
+                  </button>
+                </div>
+              </div>
             </div>
 
-            {features.length === 0 && (
-              <p style={{ color: 'var(--text-3)', fontSize: 12.5, padding: '0 4px' }}>
-                Nothing yet. Describe a feature above and it will plan one.
-              </p>
+            {active.length > 0 && (
+              <>
+                <div className="strip"><span className="eyebrow">In flight</span><span className="rule" /></div>
+                {active.map((f) => <FeatureCard key={f.id} feature={f} onOpen={setSelected} />)}
+              </>
             )}
 
-            {features.map((feature) => (
-              <button
-                key={feature.id}
-                className={`frow ${feature.id === selected ? 'on' : ''}`}
-                onClick={() => { setSelected(feature.id); setTab('plan') }}
-              >
-                <div className="title">{feature.title}</div>
-                <div className="under">
-                  <Rail status={feature.busy ? 'executing' : feature.status} />
-                  <Pill status={feature.status} busy={feature.busy} />
-                  {feature.iterations > 1 && <span className="iter">·  {feature.iterations} runs</span>}
-                </div>
-              </button>
-            ))}
+            {settled.length > 0 && (
+              <>
+                <div className="strip"><span className="eyebrow">Done</span><span className="rule" /></div>
+                {settled.map((f) => <FeatureCard key={f.id} feature={f} onOpen={setSelected} />)}
+              </>
+            )}
+
+            {features.length === 0 && ready && (
+              <p style={{ color: 'var(--text-3)', fontSize: 13, textAlign: 'center', marginTop: 8 }}>
+                Nothing yet. {workspace.harness.plan} will read your code and write a plan for you
+                to approve before anything is changed.
+              </p>
+            )}
           </div>
-        </aside>
-
-        <main className="main">
-          {!workspace && (
-            <div className="empty"><div className="box">
-              <h3>Create a workspace</h3>
-              <p>A workspace is the set of repositories a feature may change. Most have one; add
-                several when a change spans an API and the things that call it.</p>
-            </div></div>
-          )}
-
-          {workspace && !ready && (
-            <div className="empty"><div className="box">
-              <h3>{workspace.name} has no repositories</h3>
-              <p>Add one from the sidebar — paste its path. vorflux never writes to your working
-                copy; it checks out an isolated worktree per feature.</p>
-            </div></div>
-          )}
-
-          {workspace && ready && !current && (
-            <Overview workspace={workspace} features={features} onPick={(id) => { setSelected(id); setTab('plan') }} />
-          )}
-
-          {current && (
-            <div className={`main-inner ${current.status === 'awaiting_approval' ? 'gated' : ''}`}>
-              <div className="dhead">
-                <h2>{current.title}</h2>
-              </div>
-
-              <div className="dmeta">
-                <Pill status={current.status} busy={current.busy} />
-                <span className="sep">·</span>
-                <span className="mono">{current.branch}</span>
-                <span className="sep">→</span>
-                <span className="mono">{current.base}</span>
-                {current.iterations > 1 && <><span className="sep">·</span><span>{current.iterations} runs</span></>}
-              </div>
-
-              <div style={{ marginBottom: 20 }}>
-                <Rail status={current.busy ? 'executing' : current.status} large />
-                <StageLegend status={current.busy ? 'executing' : current.status} />
-              </div>
-
-              <div className="tabs">
-                {['plan', 'live', 'diff', 'evidence'].map((name) => (
-                  <button key={name} className={tab === name ? 'on' : ''} onClick={() => setTab(name)}>
-                    {name}
-                    {name === 'live' && (logs[current.id]?.length > 0) && (
-                      <span className="count">{logs[current.id].length}</span>
-                    )}
-                  </button>
-                ))}
-              </div>
-
-              {tab === 'plan' && (
-                <>
-                  <Plan plan={current.plan} />
-                  {current.status === 'awaiting_approval' && (
-                    <Gate
-                      busy={current.busy}
-                      onApprove={() => act(() => api.approve(current.id))}
-                      onDecline={() => act(async () => { await api.decline(current.id); setSelected(null) })}
-                      onRevise={(feedback) => act(() => api.revise(current.id, feedback))}
-                    />
-                  )}
-                  {PIVOTABLE.includes(current.status) && (
-                    <Pivot busy={current.busy} onPivot={(intent) => act(() => api.pivot(current.id, intent))} />
-                  )}
-                </>
-              )}
-
-              {tab === 'live' && <Log lines={logs[current.id] ?? []} connected={connected} />}
-              {tab === 'diff' && <Diff text={diff?.diff} repos={diff?.repos} />}
-              {tab === 'evidence' && (
-                evidence
-                  ? <pre className="block">{evidence}</pre>
-                  : <div className="card"><p style={{ color: 'var(--text-3)' }}>
-                      No evidence pack yet — one is written when a run finishes.
-                    </p></div>
-              )}
-            </div>
-          )}
-        </main>
+        )}
       </div>
+    </div>
+  )
+}
+
+function FeatureCard({ feature, onOpen }) {
+  const gate = feature.status === 'awaiting_approval'
+  return (
+    <button className={`fcard ${gate ? 'gate' : ''}`} onClick={() => onOpen(feature.id)}>
+      <div className="top">
+        <span className="title">{feature.title}</span>
+        <Pill status={feature.status} busy={feature.busy} />
+      </div>
+      <div className="under">
+        <Rail status={feature.busy ? 'executing' : feature.status} />
+        <span className="iter mono">{feature.branch}</span>
+        {feature.iterations > 1 && <span className="iter">· {feature.iterations} runs</span>}
+      </div>
+    </button>
+  )
+}
+
+function FirstRun({ onCreate }) {
+  const [name, setName] = useState('')
+  return (
+    <div className="stage-inner">
+      <div className="hero">
+        <Mark size={40} />
+        <h1 style={{ marginTop: 18 }}>Name your first workspace</h1>
+        <p className="sub">
+          A workspace is the set of repositories a feature may change. Most have one; add several
+          when a change spans an API and the things that call it.
+        </p>
+        <div className="prompt">
+          <input
+            autoFocus placeholder="product" value={name}
+            onChange={(e) => setName(e.target.value)}
+            onKeyDown={(e) => { if (e.key === 'Enter' && name.trim()) onCreate(name.trim()) }}
+            style={{ background: 'transparent', border: 'none', fontSize: 15, padding: 0 }}
+          />
+          <div className="foot">
+            <span className="grow" />
+            <button className="primary" disabled={!name.trim()} onClick={() => onCreate(name.trim())}>
+              Create
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+function Detail({ feature, logs, connected, tab, setTab, diff, evidence, onBack, act, onDiscard }) {
+  const gated = feature.status === 'awaiting_approval'
+  return (
+    <div className={`stage-inner wide ${gated ? 'gated' : ''}`}>
+      <button className="back" onClick={onBack}>← all features</button>
+
+      <div className="dhead"><h2>{feature.title}</h2></div>
+      <div className="dmeta">
+        <Pill status={feature.status} busy={feature.busy} />
+        <span className="sep">·</span>
+        <span className="mono">{feature.branch}</span>
+        <span className="sep">→</span>
+        <span className="mono">{feature.base}</span>
+        {feature.iterations > 1 && <><span className="sep">·</span><span>{feature.iterations} runs</span></>}
+      </div>
+
+      <div style={{ marginBottom: 20 }}>
+        <Rail status={feature.busy ? 'executing' : feature.status} large />
+        <StageLegend status={feature.busy ? 'executing' : feature.status} />
+      </div>
+
+      <div className="tabs">
+        {['plan', 'live', 'diff', 'evidence'].map((name) => (
+          <button key={name} className={tab === name ? 'on' : ''} onClick={() => setTab(name)}>
+            {name}
+            {name === 'live' && logs.length > 0 && <span className="count">{logs.length}</span>}
+          </button>
+        ))}
+      </div>
+
+      {tab === 'plan' && (
+        <>
+          <Plan plan={feature.plan} />
+          {gated && (
+            <Gate
+              busy={feature.busy}
+              onApprove={() => act(() => api.approve(feature.id))}
+              onDecline={() => act(async () => { await api.decline(feature.id); onDiscard() })}
+              onRevise={(feedback) => act(() => api.revise(feature.id, feedback))}
+            />
+          )}
+          {PIVOTABLE.includes(feature.status) && (
+            <Pivot busy={feature.busy} onPivot={(intent) => act(() => api.pivot(feature.id, intent))} />
+          )}
+        </>
+      )}
+      {tab === 'live' && <Log lines={logs} connected={connected} />}
+      {tab === 'diff' && <Diff text={diff?.diff} repos={diff?.repos} />}
+      {tab === 'evidence' && (
+        evidence
+          ? <pre className="block">{evidence}</pre>
+          : <div className="card"><p style={{ color: 'var(--text-3)' }}>
+              No evidence pack yet — one is written when a run finishes.
+            </p></div>
+      )}
     </div>
   )
 }
@@ -268,8 +338,7 @@ function Pivot({ busy, onPivot }) {
       <textarea
         rows={2}
         placeholder="Pivot this feature — keeps the branch and what the agent already knows"
-        value={intent}
-        disabled={busy}
+        value={intent} disabled={busy}
         onChange={(e) => setIntent(e.target.value)}
         onKeyDown={(e) => { if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) send() }}
       />

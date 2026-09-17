@@ -12,10 +12,10 @@ from pathlib import Path
 
 import pytest
 
-from vorflux.events import Result, SessionStarted
-from vorflux.harness import registry
-from vorflux.harness.base import InvokeSpec
-from vorflux.pipeline.schemas import ReviewVerdict, json_schema
+from drove.events import Result, SessionStarted
+from drove.harness import registry
+from drove.harness.base import InvokeSpec
+from drove.pipeline.schemas import ReviewVerdict, json_schema
 
 NAMES = sorted(registry.PRESETS)
 

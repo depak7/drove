@@ -5,7 +5,7 @@ import json
 import pytest
 from pydantic import ValidationError
 
-from vorflux.pipeline.schemas import PlanDoc, ReviewVerdict, json_schema
+from drove.pipeline.schemas import PlanDoc, ReviewVerdict, json_schema
 
 
 def test_schemas_are_self_contained():

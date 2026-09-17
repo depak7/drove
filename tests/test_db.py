@@ -6,7 +6,7 @@ from pathlib import Path
 
 import pytest
 
-from vorflux import config, db
+from drove import config, db
 
 
 @pytest.fixture

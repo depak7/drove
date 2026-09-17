@@ -11,7 +11,7 @@ from pathlib import Path
 
 import pytest
 
-from vorflux.events import (
+from drove.events import (
     AssistantText,
     RateLimit,
     Result,
@@ -20,9 +20,9 @@ from vorflux.events import (
     ToolResult,
     Usage,
 )
-from vorflux.harness.base import InvokeSpec
-from vorflux.harness.claude_code import ClaudeCodeHarness
-from vorflux.pipeline.schemas import PlanDoc, json_schema
+from drove.harness.base import InvokeSpec
+from drove.harness.claude_code import ClaudeCodeHarness
+from drove.pipeline.schemas import PlanDoc, json_schema
 
 FIXTURE = Path(__file__).parent / "fixtures" / "claude_plan.jsonl"
 

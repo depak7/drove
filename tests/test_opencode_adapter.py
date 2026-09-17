@@ -5,10 +5,10 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from vorflux.events import AssistantText, SessionStarted, ToolCall, ToolResult, Usage
-from vorflux.harness.base import InvokeSpec
-from vorflux.harness.opencode import OpenCodeHarness
-from vorflux.harness.util import extract_json_object
+from drove.events import AssistantText, SessionStarted, ToolCall, ToolResult, Usage
+from drove.harness.base import InvokeSpec
+from drove.harness.opencode import OpenCodeHarness
+from drove.harness.util import extract_json_object
 
 FIXTURE = Path(__file__).parent / "fixtures" / "opencode_edit.jsonl"
 

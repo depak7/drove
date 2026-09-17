@@ -11,7 +11,7 @@ export default function Pulse() {
   const [state, setState] = useState({ running: 0, waiting: 0 })
 
   useEffect(() => {
-    window.vorfluxDesktop?.onPulse?.((next) => setState(next ?? { running: 0, waiting: 0 }))
+    window.droveDesktop?.onPulse?.((next) => setState(next ?? { running: 0, waiting: 0 }))
   }, [])
 
   const { running = 0, waiting = 0 } = state

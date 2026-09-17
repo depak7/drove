@@ -5,9 +5,9 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from vorflux.events import AssistantText, FileChanged, SessionStarted, ToolCall, ToolResult, Usage
-from vorflux.harness.base import InvokeSpec
-from vorflux.harness.codex import CodexHarness
+from drove.events import AssistantText, FileChanged, SessionStarted, ToolCall, ToolResult, Usage
+from drove.harness.base import InvokeSpec
+from drove.harness.codex import CodexHarness
 
 FIXTURE = Path(__file__).parent / "fixtures" / "codex_edit.jsonl"
 
