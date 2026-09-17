@@ -5,8 +5,10 @@ to a reviewed branch and an evidence pack — driven entirely by the coding CLIs
 installed and logged in (`claude`, `codex`, `opencode`).
 
 ```
-PLAN    →  ⏸ you approve  →  EXECUTE  →  REVIEW  →  VERIFY  →  DELIVER
-claude                        claude      codex     repo cmds  branch + evidence
+PLAN  →  ⏸ you approve  →  EXECUTE  →  REVIEW  →  VERIFY  →  DELIVER
+claude                     claude   ⇄  codex     repo cmds  branch + evidence
+                                    ↑_____↓
+                                   ≤2 fix rounds
 ```
 
 The point is **cross-model review**: the harness that wrote the code never grades its own homework.
@@ -22,7 +24,7 @@ cd ~/my-repo && vorflux init && vorflux doctor
 
 ```bash
 vorflux plan "add rate limiting to the API"   # plan, then approve / decline / type feedback
-vorflux execute <feature>                     # implement it on an isolated worktree branch
+vorflux execute <feature>                     # implement → review → fix → verify → evidence
 vorflux features                              # what exists and where it got to
 vorflux pivot <feature> "use a token bucket"  # change direction; keeps the branch and the agent's memory
 ```

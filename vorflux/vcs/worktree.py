@@ -70,6 +70,16 @@ def create(repo: Path, feature_id: str, base: str) -> Worktree:
     path = path_for(repo, feature_id)
     branch = branch_for(feature_id)
 
+    # Nesting a worktree inside the repo it belongs to is quietly destructive: test discovery
+    # collects it, file watchers recurse into copies of themselves, ripgrep returns every match
+    # twice, and `git add -A` eventually commits a whole embedded repository. Reachable in
+    # practice by pointing VORFLUX_HOME at a directory inside the project.
+    if path.is_relative_to(repo):
+        raise WorktreeError(
+            f"worktree {path} would live inside the repository {repo}. "
+            "Set VORFLUX_HOME to a directory outside the project."
+        )
+
     if path.exists():
         # A feature's worktree is reused across runs, so this is the pivot path, not an error.
         return Worktree(repo=repo, path=path, branch=branch, base=base)

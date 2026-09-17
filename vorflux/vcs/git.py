@@ -71,3 +71,14 @@ def branch_exists(repo: Path, branch: str) -> bool:
         ).returncode
         == 0
     )
+
+
+def changed_files(worktree: Path, base: str) -> list[str]:
+    """Paths this branch touches relative to its merge base with `base`.
+
+    Derived from git rather than from harness FileChanged events: codex emits those, claude does
+    not, and an evidence pack that lists files for one harness and nothing for another is worse
+    than useless.
+    """
+    out = git(worktree, "diff", "--name-only", f"{base}...HEAD", check=False)
+    return [line for line in out.splitlines() if line.strip()]

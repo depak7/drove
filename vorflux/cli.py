@@ -9,13 +9,15 @@ from pathlib import Path
 
 import typer
 
-from vorflux import __version__, db, ui
+from vorflux import __version__, db, evidence, ui
 from vorflux.config import HOME, REPO_CONFIG, TEMPLATE, RepoConfig
 from vorflux.harness import registry
+from vorflux.pipeline.engine import RunOutcome, run_cycle
 from vorflux.pipeline.schemas import PlanDoc
 from vorflux.pipeline.stages.execute import StageError as ExecuteError
 from vorflux.pipeline.stages.execute import run_execute
 from vorflux.pipeline.stages.plan import StageError, run_plan
+from vorflux.pipeline.stages.review import StageError as ReviewError
 from vorflux.vcs import git, worktree
 
 app = typer.Typer(
@@ -298,8 +300,9 @@ def _check_drift(wt, assume_ignore: bool = False) -> None:
 def execute_cmd(
     feature: str = typer.Argument(..., help="Feature id or branch"),
     repo: Path = typer.Option(Path("."), "--repo", "-C", help="Repository root"),
+    no_review: bool = typer.Option(False, "--no-review", help="Implement only; skip the cycle"),
 ) -> None:
-    """Implement a feature's approved plan on its branch."""
+    """Run the full cycle on an approved plan: implement, review, fix, verify, deliver."""
     repo, cfg = _open_repo(repo)
 
     with db.connect() as conn:
@@ -317,8 +320,14 @@ def execute_cmd(
 
     plan = PlanDoc.model_validate(json.loads(latest["plan_json"]))
     wt = worktree.create(repo, row["id"], row["base_branch"])
-
     _check_drift(wt, assume_ignore=True)
+
+    if not no_review and cfg.harness["review"] == cfg.harness["execute"]:
+        typer.secho(
+            f"  ! review and execute are both {cfg.harness['execute']} — a harness reviewing its"
+            " own work is not an independent review",
+            fg=typer.colors.YELLOW,
+        )
 
     resume = prior["session_id"] if prior else None
     if resume:
@@ -327,44 +336,75 @@ def execute_cmd(
     with db.connect() as conn:
         db.set_feature_status(conn, row["id"], "executing")
 
+    def report(stage: str, message: str) -> None:
+        typer.secho(f"\n▸ {stage}: {message}", fg=typer.colors.CYAN, err=True)
+
     try:
-        outcome = asyncio.run(
-            run_execute(
-                plan,
-                wt,
-                cfg,
-                latest["id"],
-                # The RUN's intent, not the feature title: on a pivot those differ, and a
-                # second commit reading "Add divide()" tells a reviewer nothing about
-                # what changed.
-                latest["intent"],
-                resume_session=resume,
-                on_event=ui.stream_line,
+        if no_review:
+            executed = asyncio.run(
+                run_execute(
+                    plan, wt, cfg, latest["id"], latest["intent"],
+                    resume_session=resume, on_event=ui.stream_line,
+                )
             )
-        )
-    except (StageError, ExecuteError, KeyError) as exc:
+            outcome = RunOutcome(
+                status="delivered" if executed.committed else "no_changes",
+                execute=executed,
+                files_changed=list(executed.files_changed),
+                sessions={"execute": executed.session_id},
+                cost_usd=executed.cost_usd,
+                tokens_in=executed.tokens_in,
+                tokens_out=executed.tokens_out,
+            )
+        else:
+            outcome = asyncio.run(
+                run_cycle(
+                    plan, wt, cfg, latest["id"], latest["intent"],
+                    resume_session=resume, on_event=ui.stream_line, report=report,
+                )
+            )
+    except (StageError, ExecuteError, ReviewError, KeyError) as exc:
         with db.connect() as conn:
             db.finish_run(conn, latest["id"], "failed")
             db.set_feature_status(conn, row["id"], "failed")
         _err(str(exc))
         raise typer.Exit(1) from exc
 
-    with db.connect() as conn:
-        db.record_session(
-            conn, latest["id"], "execute", cfg.harness["execute"], outcome.session_id, wt.path,
-            tokens_in=outcome.tokens_in, tokens_out=outcome.tokens_out, cost_usd=outcome.cost_usd,
-        )
-        db.finish_run(conn, latest["id"], "executed", head_sha=outcome.head_sha)
-        db.set_feature_status(conn, row["id"], "executed")
+    head_sha = outcome.execute.head_sha if outcome.execute else None
 
-    typer.echo("")
-    if outcome.committed:
-        sha = (outcome.head_sha or "")[:8]
-        typer.secho(f"committed {sha} on {wt.branch}", fg=typer.colors.GREEN)
-    else:
-        typer.secho("no changes were made", fg=typer.colors.YELLOW)
-    typer.secho(f"  diff:  git -C {repo} diff {row['base_branch']}..{wt.branch}", fg=ui.DIM)
-    typer.secho(f"  tree:  {wt.path}", fg=ui.DIM)
+    pack = evidence.write(
+        evidence.Evidence(
+            run_id=latest["id"],
+            feature_id=row["id"],
+            iteration=latest["iteration"],
+            intent=latest["intent"],
+            branch=wt.branch,
+            base=wt.base,
+            plan=plan,
+            head_sha=head_sha,
+            files_changed=outcome.files_changed,
+            reviews=outcome.reviews,
+            verify=outcome.verify,
+            cost_usd=outcome.cost_usd,
+            tokens_in=outcome.tokens_in,
+            tokens_out=outcome.tokens_out,
+            sessions=outcome.sessions,
+            status=outcome.status,
+        )
+    )
+
+    with db.connect() as conn:
+        for stage, session_id in outcome.sessions.items():
+            base_stage, _, attempt = stage.partition("-")
+            db.record_session(
+                conn, latest["id"], base_stage,
+                cfg.harness.get(base_stage, cfg.harness["execute"]),
+                session_id, wt.path, attempt=int(attempt or 1),
+            )
+        db.finish_run(conn, latest["id"], outcome.status, head_sha=head_sha)
+        db.set_feature_status(conn, row["id"], outcome.status)
+
+    ui.render_outcome(outcome, wt, repo, pack)
 
 
 @app.command(name="features")

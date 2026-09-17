@@ -98,15 +98,22 @@ async def run_execute(
     title: str,
     resume_session: str | None = None,
     on_event: Callable[[HarnessEvent], None] | None = None,
+    prompt_override: str | None = None,
 ) -> ExecuteOutcome:
+    """Implement the plan, or — with `prompt_override` — a fix round against the same session.
+
+    A fix round is the same stage, not a new one: same harness, same worktree, same conversation.
+    Only the instruction differs, so the agent does not re-derive the code it just wrote.
+    """
     session_id = resume_session or str(uuid.uuid4())
-    raw_log = runs_dir(run_id) / "execute.jsonl"
+    suffix = "execute" if prompt_override is None else "fix"
+    raw_log = runs_dir(run_id) / f"{suffix}.jsonl"
 
     write_plan_file(wt, plan)
 
     harness = registry.get(cfg.harness["execute"])
     spec = InvokeSpec(
-        prompt=render_prompt(plan, wt.branch),
+        prompt=prompt_override or render_prompt(plan, wt.branch),
         cwd=wt.path,
         mode="write",
         session_id=session_id,

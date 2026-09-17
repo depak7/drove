@@ -144,3 +144,14 @@ def test_prune_clears_stale_registrations(repo):
     subprocess.run(["rm", "-rf", str(wt.path)], check=True)
     worktree.prune(repo)
     assert str(wt.path) not in git.git(repo, "worktree", "list")
+
+
+def test_refuses_to_nest_a_worktree_inside_the_repo(repo, monkeypatch):
+    """Reachable by pointing VORFLUX_HOME inside the project — and quietly destructive.
+
+    Observed for real: `git add -A` in such a repo stages the worktree as an embedded git
+    repository ("warning: adding embedded git repository").
+    """
+    monkeypatch.setattr(config, "HOME", repo / ".state")
+    with pytest.raises(worktree.WorktreeError, match="inside the repository"):
+        worktree.create(repo, "task-1", "main")
