@@ -19,6 +19,13 @@ class PlanStep(BaseModel):
 
 
 class PlanDoc(BaseModel):
+    title: str = Field(
+        default="",
+        description=(
+            "A short imperative name for this work, at most 60 characters, as a colleague would "
+            "write it on a ticket. Not a restatement of the request."
+        ),
+    )
     summary: str = Field(description="One paragraph: what will be built and the approach")
     files_to_touch: list[str] = Field(default_factory=list)
     steps: list[PlanStep] = Field(default_factory=list)

@@ -10,7 +10,7 @@ from pathlib import Path
 import typer
 
 from drove import __version__, config, db, evidence, ui
-from drove.config import HOME, REPO_CONFIG, TEMPLATE
+from drove.config import HOME, REPO_CONFIG, TEMPLATE, provisional_title
 from drove.harness import registry
 from drove.pipeline.engine import RunOutcome, run_cycle
 from drove.pipeline.schemas import PlanDoc
@@ -201,7 +201,7 @@ def workspace_list() -> None:
                 )
 
 
-def _plan_loop(task: str, ws, trees, run_id: str, yes: bool) -> bool:
+def _plan_loop(task: str, ws, trees, run_id: str, feature_id: str, yes: bool) -> bool:
     """Plan, then approve / decline / revise. True once a plan is approved.
 
     A revision resumes the planner's session: it already paid to read this codebase, so feedback
@@ -227,6 +227,8 @@ def _plan_loop(task: str, ws, trees, run_id: str, yes: bool) -> bool:
 
         with db.connect() as conn:
             db.set_run_plan(conn, run_id, outcome.plan.model_dump())
+            if title := outcome.plan.title.strip():
+                db.set_feature_title(conn, feature_id, title[:80])
             db.record_session(
                 conn, run_id, "plan", ws.harness["plan"], session, trees.root,
                 tokens_in=outcome.tokens_in, tokens_out=outcome.tokens_out,
@@ -262,8 +264,8 @@ def plan_cmd(
     primary = trees.trees[0]
     with db.connect() as conn:
         db.create_feature(
-            conn, primary.repo.path, task, trees.branch, trees.root, primary.base,
-            feature_id=feature_id, workspace_id=ws.id,
+            conn, primary.repo.path, provisional_title(task), trees.branch, trees.root,
+            primary.base, feature_id=feature_id, workspace_id=ws.id,
         )
         run_id, _ = db.create_run(conn, feature_id, task)
 
@@ -271,7 +273,7 @@ def plan_cmd(
     for t in trees:
         typer.secho(f"  {t.repo.name:<16} {t.path}", fg=ui.DIM)
 
-    if not _plan_loop(task, ws, trees, run_id, yes):
+    if not _plan_loop(task, ws, trees, run_id, feature_id, yes):
         results = tree.teardown(trees)
         kept = {n: r for n, r in results.items() if not r.removed}
         with db.connect() as conn:
@@ -314,7 +316,7 @@ def pivot_cmd(
 
     typer.secho(f"feature {row['id']}  iteration {iteration}  branch {trees.branch}", fg=ui.DIM)
 
-    if not _plan_loop(intent, ws, trees, run_id, yes):
+    if not _plan_loop(intent, ws, trees, run_id, row["id"], yes):
         # Never tear down on a declined pivot: earlier iterations' work is on these branches.
         with db.connect() as conn:
             db.finish_run(conn, run_id, "declined")

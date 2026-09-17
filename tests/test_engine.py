@@ -158,3 +158,18 @@ async def test_changed_files_come_from_git_not_the_event_stream(trees, solo, mon
 
     outcome = await engine.run_cycle(PLAN, trees, solo, "run-1", "add a thing")
     assert outcome.files_changed == ["b.py"]
+
+
+async def test_each_stage_reports_itself(trees, solo, monkeypatch):
+    """The UI shows the run's status, so a status of "executing" during review is a lie.
+
+    The engine names every stage as it starts; those names are what the status is set from.
+    """
+    stub_stages(monkeypatch, [blocked(), PASS])
+    seen: list[str] = []
+    await engine.run_cycle(
+        PLAN, trees, solo, "run-1", "add a thing", report=lambda stage, _msg: seen.append(stage)
+    )
+
+    assert seen[:3] == ["execute", "review", "fix"]
+    assert "review" in seen[3:], "the second review round must report itself too"

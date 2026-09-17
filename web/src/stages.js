@@ -11,7 +11,9 @@ const AT = {
   awaiting_approval: { at: 0, state: 'gate' },
   approved:          { at: 1, state: 'running' },
   executing:         { at: 1, state: 'running' },
+  fixing:            { at: 1, state: 'running' },
   reviewing:         { at: 2, state: 'running' },
+  verifying:         { at: 3, state: 'running' },
   needs_human:       { at: 2, state: 'stopped' },
   verify_failed:     { at: 3, state: 'failed' },
   no_changes:        { at: 1, state: 'stopped' },
@@ -30,7 +32,9 @@ export const LABEL = {
   awaiting_approval: ['gate',    'needs your approval'],
   approved:          ['running', 'starting'],
   executing:         ['running', 'implementing'],
+  fixing:            ['running', 'fixing review issues'],
   reviewing:         ['running', 'in review'],
+  verifying:         ['running', 'running your checks'],
   needs_human:       ['attn',    'needs you'],
   verify_failed:     ['bad',     'checks failed'],
   no_changes:        ['attn',    'no changes'],
@@ -49,3 +53,28 @@ export const STAGE_COLOR = {
   verify: 'var(--st-verify)',
   deliver: 'var(--st-deliver)',
 }
+
+
+/**
+ * States where the system has stopped and is waiting on a person.
+ *
+ * An approval is the obvious one, but a run that deadlocked in review, failed your tests, errored
+ * or changed nothing is equally stuck — and used to look identical to finished work. Anything
+ * here is counted, badged and surfaced the same way, because to you they are the same thing: the
+ * machine cannot proceed without a decision.
+ */
+export const NEEDS_YOU = {
+  awaiting_approval: { verb: 'Approve the plan', why: 'A plan is ready for your decision.' },
+  needs_human: {
+    verb: 'Settle the disagreement',
+    why: 'The reviewer still blocked the change after two fix rounds. That usually means the request was ambiguous.',
+  },
+  verify_failed: {
+    verb: 'Decide what to do',
+    why: "Your own project checks failed on the branch. The code was reviewed, but it does not pass.",
+  },
+  failed: { verb: 'Decide what to do', why: 'The run errored before it finished.' },
+  no_changes: { verb: 'Decide what to do', why: 'The agent made no changes. The request may already be satisfied, or it was too vague to act on.' },
+}
+
+export const needsYou = (feature) => !feature.busy && Boolean(NEEDS_YOU[feature.status])

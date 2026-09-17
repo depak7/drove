@@ -1,9 +1,10 @@
 import { useEffect, useRef, useState } from 'react'
 import { STAGES, STAGE_COLOR, label, progress } from './stages'
 
-export function Pill({ status, busy }) {
-  const effective = busy && !['awaiting_approval'].includes(status) ? 'executing' : status
-  const [tone, text] = label(effective)
+export function Pill({ status }) {
+  // The status now names the stage the run is in; overriding it with "executing" whenever a job
+  // was attached made every running feature claim to be implementing, mid-plan and mid-review.
+  const [tone, text] = label(status)
   return (
     <span className={`pill ${tone}`}>
       <i />

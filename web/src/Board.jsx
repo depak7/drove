@@ -1,5 +1,5 @@
 import { Pill, Rail } from './components'
-import { progress } from './stages'
+import { needsYou, progress } from './stages'
 
 /**
  * The board: columns are pipeline stages, and nothing is dragged.
@@ -16,11 +16,13 @@ const COLUMNS = [
 ]
 
 function columnFor(feature) {
-  const status = feature.busy ? 'executing' : feature.status
+  const status = feature.status
   if (['delivered', 'landed'].includes(status)) return 'done'
   if (['verify_failed'].includes(status)) return 'verify'
   if (['reviewing', 'needs_human'].includes(status)) return 'review'
-  if (['approved', 'executing', 'no_changes', 'failed'].includes(status)) return 'build'
+  if (['verifying', 'verify_failed'].includes(status)) return 'verify'
+  if (['reviewing', 'needs_human'].includes(status)) return 'review'
+  if (['approved', 'executing', 'fixing', 'no_changes', 'failed'].includes(status)) return 'build'
   return 'plan'
 }
 
@@ -48,11 +50,13 @@ export function Board({ features, onOpen }) {
 }
 
 function BoardCard({ feature, onOpen }) {
-  const status = feature.busy ? 'executing' : feature.status
+  const status = feature.status
   const { at } = progress(status)
   return (
     <button
-      className={`bcard ${feature.status === 'awaiting_approval' ? 'gate' : ''}`}
+      className={`bcard ${feature.status === 'awaiting_approval' ? 'gate' : ''} ${
+        needsYou(feature) && feature.status !== 'awaiting_approval' ? 'blocked' : ''
+      }`}
       onClick={() => onOpen(feature.id)}
     >
       <div className="t">{feature.title}</div>

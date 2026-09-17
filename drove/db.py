@@ -230,6 +230,10 @@ def create_feature(
     return feature_id
 
 
+def set_feature_title(conn: sqlite3.Connection, feature_id: str, title: str) -> None:
+    conn.execute("UPDATE features SET title = ? WHERE id = ?", (title, feature_id))
+
+
 def set_feature_status(conn: sqlite3.Connection, feature_id: str, status: str) -> None:
     conn.execute("UPDATE features SET status = ? WHERE id = ?", (status, feature_id))
 

@@ -88,3 +88,25 @@ execute = "claude"
 review = "codex"
 arbiter = "opencode"
 """
+
+
+def provisional_title(task: str, limit: int = 62) -> str:
+    """A readable name for a feature before the planner has named it properly.
+
+    A pasted paragraph makes a terrible title, and the feature list is unusable when every row is
+    the same wall of text. The full request is never lost — it is kept verbatim as the run's
+    intent, and the planner replaces this with a real title as soon as it produces one.
+    """
+    text = " ".join(task.split())
+    if not text:
+        return "Untitled"
+    # A first sentence or clause is usually the ask; everything after it is qualification.
+    for stop in (". ", "; ", " — ", " - ", ", and ", ": "):
+        head, sep, _ = text.partition(stop)
+        if sep and 12 <= len(head) <= limit:
+            text = head
+            break
+    if len(text) <= limit:
+        return text
+    cut = text[:limit].rsplit(" ", 1)[0]
+    return f"{cut or text[:limit]}…"

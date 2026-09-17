@@ -7,11 +7,12 @@ import { SettingsSheet } from './Settings'
 import { Mark, Wordmark } from './Logo'
 import { PipelineStrip } from './Pipeline'
 import { Board } from './Board'
+import { NEEDS_YOU, needsYou } from './stages'
 import { Agents, Blank, Runs } from './Agents'
 import { isDesktop, notify, setPulse } from './desktop'
 
 const PIVOTABLE = ['delivered', 'landed', 'needs_human', 'verify_failed', 'no_changes']
-const ACTIVE = ['planning', 'awaiting_approval', 'approved', 'executing', 'reviewing']
+const ACTIVE = ['planning', 'awaiting_approval', 'approved', 'executing', 'fixing', 'reviewing', 'verifying']
 
 export default function App() {
   const [workspaces, setWorkspaces] = useState([])
@@ -56,9 +57,10 @@ export default function App() {
       if (event.kind !== 'status') return
       // The point of a desktop app is not having to watch it. Interrupt only for the two states
       // that actually need a person.
-      if (event.status === 'awaiting_approval') notify('Plan ready', 'A feature is waiting on your approval.')
-      if (['needs_human', 'verify_failed', 'failed'].includes(event.status)) {
-        notify('Run stopped', `A feature ended as ${event.status.replace(/_/g, ' ')}.`)
+      if (event.status === 'awaiting_approval') {
+        notify('Plan ready', 'A feature is waiting on your approval.')
+      } else if (NEEDS_YOU[event.status]) {
+        notify('Needs you', NEEDS_YOU[event.status].why)
       }
     }, [refresh]),
   )
@@ -78,7 +80,7 @@ export default function App() {
     if (!isDesktop) return
     setPulse({
       running: features.filter((f) => f.busy).length,
-      waiting: features.filter((f) => f.status === 'awaiting_approval').length,
+      waiting: features.filter(needsYou).length,
     })
   }, [features])
 
@@ -108,7 +110,8 @@ export default function App() {
   const active = features.filter((f) => f.busy || ACTIVE.includes(f.status))
   const settled = features.filter((f) => !active.includes(f))
   const running = features.filter((f) => f.busy).length
-  const waiting = features.filter((f) => f.status === 'awaiting_approval').length
+  const blocked = features.filter(needsYou)
+  const waiting = blocked.length
   const spend = runs.reduce((sum, r) => sum + (r.cost_usd ?? 0), 0)
 
   return (
@@ -117,39 +120,32 @@ export default function App() {
         <Wordmark />
 
         {workspace && (
-          <div className="zone">
-            <span className="zlabel">Workspace</span>
-            <button className="ws" onClick={() => setSheet(true)}>
+          <>
+            <span className="hdiv" />
+            <button className="ws" onClick={() => setSheet(true)} title="Switch workspace">
               {workspace.name}
               <span className="caret">▾</span>
             </button>
-          </div>
-        )}
 
-        {workspace && (
-          <div className="zone">
-            <span className="zlabel">
-              {workspace.repos.length === 1 ? 'Repository' : `Repositories · ${workspace.repos.length}`}
-            </span>
-            <div className="repos">
+            <div className="repos" title="Repositories a feature here may change">
               {workspace.repos.length === 0 ? (
-                <button className="ghost tiny" onClick={() => setSheet(true)}>+ add one</button>
+                <button className="ghost tiny" onClick={() => setSheet(true)}>+ add a repository</button>
               ) : (
                 <>
-                  {workspace.repos.slice(0, 3).map((r) => (
+                  {workspace.repos.slice(0, 4).map((r) => (
                     <span className={`chip ${r.exists ? '' : 'missing'}`} key={r.path} title={r.path}>
                       {r.name}
                     </span>
                   ))}
-                  {workspace.repos.length > 3 && (
+                  {workspace.repos.length > 4 && (
                     <button className="chip add" onClick={() => setSheet(true)}>
-                      +{workspace.repos.length - 3}
+                      +{workspace.repos.length - 4}
                     </button>
                   )}
                 </>
               )}
             </div>
-          </div>
+          </>
         )}
 
         <span className="grow" />
@@ -271,6 +267,24 @@ export default function App() {
             </div>
           ) : (
             <div className="pane-inner narrow">
+              {blocked.length > 0 && (
+                <section className="needsyou">
+                  <div className="needsyou-head">
+                    <span className="count">{blocked.length}</span>
+                    <b>Needs you</b>
+                  </div>
+                  {blocked.map((f) => (
+                    <button className="nyrow" key={f.id} onClick={() => setSelected(f.id)}>
+                      <div className="body">
+                        <div className="t">{f.title}</div>
+                        <div className="why">{NEEDS_YOU[f.status]?.why}</div>
+                      </div>
+                      <span className="verb">{NEEDS_YOU[f.status]?.verb} →</span>
+                    </button>
+                  ))}
+                </section>
+              )}
+
               <div className="hero">
                 <h1>What do you want built?</h1>
                 {!ready && <p className="sub">Add a repository first — {workspace.name} has none.</p>}
@@ -323,7 +337,7 @@ export default function App() {
           <b>{running}</b> running
         </span>
         <span className={waiting > 0 ? 'sb-gate' : ''}>
-          <b>{waiting}</b> awaiting you
+          <b>{waiting}</b> needs you
         </span>
         <span><b>{features.length}</b> features</span>
         <span><b>{runs.length}</b> runs</span>
@@ -338,13 +352,16 @@ export default function App() {
 function FeatureCard({ feature, onOpen }) {
   const gate = feature.status === 'awaiting_approval'
   return (
-    <button className={`fcard ${gate ? 'gate' : ''}`} onClick={() => onOpen(feature.id)}>
+    <button
+      className={`fcard ${gate ? 'gate' : ''} ${needsYou(feature) && !gate ? 'blocked' : ''}`}
+      onClick={() => onOpen(feature.id)}
+    >
       <div className="top">
         <span className="title">{feature.title}</span>
         <Pill status={feature.status} busy={feature.busy} />
       </div>
       <div className="under">
-        <Rail status={feature.busy ? 'executing' : feature.status} />
+        <Rail status={feature.status} />
         <span className="iter mono">{feature.branch}</span>
         {feature.iterations > 1 && <span className="iter">· {feature.iterations} runs</span>}
       </div>
@@ -384,8 +401,9 @@ function FirstRun({ onCreate }) {
 
 function Detail({ feature, logs, connected, tab, setTab, diff, evidence, onBack, act, onDiscard }) {
   const gated = feature.status === 'awaiting_approval'
+  const stopped = !gated && Boolean(NEEDS_YOU[feature.status])
   return (
-    <div className={`stage-inner wide ${gated ? 'gated' : ''}`}>
+    <div className={`stage-inner wide ${gated || stopped ? 'gated' : ''}`}>
       <button className="back" onClick={onBack}>← all features</button>
 
       <div className="dhead"><h2>{feature.title}</h2></div>
@@ -399,8 +417,8 @@ function Detail({ feature, logs, connected, tab, setTab, diff, evidence, onBack,
       </div>
 
       <div style={{ marginBottom: 20 }}>
-        <Rail status={feature.busy ? 'executing' : feature.status} large />
-        <StageLegend status={feature.busy ? 'executing' : feature.status} />
+        <Rail status={feature.status} large />
+        <StageLegend status={feature.status} />
       </div>
 
       <div className="tabs">
@@ -423,7 +441,15 @@ function Detail({ feature, logs, connected, tab, setTab, diff, evidence, onBack,
               onRevise={(feedback) => act(() => api.revise(feature.id, feedback))}
             />
           )}
-          {PIVOTABLE.includes(feature.status) && (
+          {!gated && NEEDS_YOU[feature.status] && (
+            <Stopped
+              feature={feature}
+              busy={feature.busy}
+              onPivot={(intent) => act(() => api.pivot(feature.id, intent))}
+              onDiscard={() => act(async () => { await api.decline(feature.id); onDiscard() })}
+            />
+          )}
+          {!NEEDS_YOU[feature.status] && PIVOTABLE.includes(feature.status) && (
             <Pivot busy={feature.busy} onPivot={(intent) => act(() => api.pivot(feature.id, intent))} />
           )}
         </>
@@ -437,6 +463,42 @@ function Detail({ feature, logs, connected, tab, setTab, diff, evidence, onBack,
               No evidence pack yet — one is written when a run finishes.
             </p></div>
       )}
+    </div>
+  )
+}
+
+/**
+ * A run that stopped needs a decision as much as a plan does, so it gets the same pinned bar.
+ * Previously these looked like finished work with an unusual label.
+ */
+function Stopped({ feature, busy, onPivot, onDiscard }) {
+  const [intent, setIntent] = useState('')
+  const info = NEEDS_YOU[feature.status]
+  const send = () => {
+    const text = intent.trim()
+    if (!text) return
+    setIntent('')
+    onPivot(text)
+  }
+  return (
+    <div className="gatebar stopped">
+      <div className="reason">{info.why}</div>
+      <textarea
+        rows={2}
+        placeholder="Tell it what to do differently, and it will re-plan on the same branch…"
+        value={intent}
+        disabled={busy}
+        onChange={(e) => setIntent(e.target.value)}
+        onKeyDown={(e) => { if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) send() }}
+      />
+      <div className="row">
+        <span className="eyebrow">{info.verb}</span>
+        <span className="grow" />
+        <button className="ghost danger" disabled={busy} onClick={onDiscard}>Discard</button>
+        <button className="primary" disabled={busy || !intent.trim()} onClick={send}>
+          Re-plan with this
+        </button>
+      </div>
     </div>
   )
 }

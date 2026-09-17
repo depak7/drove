@@ -15,6 +15,9 @@ belong in the same change. Name files as `<repo>/<path>` when the workspace has 
 TASK
 {task}
 
+Give the work a short imperative `title` — what a colleague would write on a ticket, at most 60
+characters. Not a restatement of the request back at me.
+
 Produce a plan that:
 - names the real files that must change, verified by actually looking at them
 - breaks the work into steps small enough to implement and review independently

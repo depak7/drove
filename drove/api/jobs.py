@@ -138,6 +138,9 @@ async def _plan(feature_id: str, task: str, feedback: str | None) -> None:
 
     with db.connect() as conn:
         db.set_run_plan(conn, run_id, outcome.plan.model_dump())
+        # The planner read the code; its title beats anything derived from the raw request.
+        if title := outcome.plan.title.strip():
+            db.set_feature_title(conn, feature_id, title[:80])
         db.record_session(
             conn, run_id, "plan", workspace.harness["plan"], outcome.session_id, trees.root,
             tokens_in=outcome.tokens_in, tokens_out=outcome.tokens_out, cost_usd=outcome.cost_usd,
@@ -170,8 +173,21 @@ async def _cycle(feature_id: str) -> None:
         if behind:
             emit(feature_id, "drift", repo=t.repo.name, base=t.base, commits=behind)
 
+    # The engine names each stage as it starts; persist that as the feature's status so the UI is
+    # truthful on a refresh, not only for whoever happened to be watching the event stream.
+    STAGE_STATUS = {
+        "execute": "executing",
+        "fix": "fixing",
+        "review": "reviewing",
+        "verify": "verifying",
+    }
+
     def report(stage: str, message: str) -> None:
         emit(feature_id, "stage", stage=stage, message=message)
+        if status := STAGE_STATUS.get(stage):
+            with db.connect() as conn:
+                db.set_feature_status(conn, feature_id, status)
+            emit(feature_id, "status", status=status)
 
     with db.connect() as conn:
         db.set_feature_status(conn, feature_id, "executing")

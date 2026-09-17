@@ -26,7 +26,7 @@ from drove import __version__, db
 from drove import workspace as ws_mod
 from drove.api import jobs
 from drove.api.bus import bus
-from drove.config import runs_dir
+from drove.config import provisional_title, runs_dir
 from drove.harness import registry
 from drove.vcs import git
 from drove.vcs import tree as trees_mod
@@ -389,9 +389,10 @@ def create_feature(body: NewFeature) -> dict[str, Any]:
         trees = trees_mod.create(ws, feature_id)
         primary = trees.trees[0]
         db.create_feature(
-            conn, primary.repo.path, body.task, trees.branch, trees.root,
+            conn, primary.repo.path, provisional_title(body.task), trees.branch, trees.root,
             primary.base, feature_id=feature_id, workspace_id=ws.id,
         )
+        # The run keeps the request verbatim; only the feature's display name is shortened.
         db.create_run(conn, feature_id, body.task)
         payload = _feature_json(conn, db.get_feature(conn, feature_id))
 
