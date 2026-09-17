@@ -128,6 +128,9 @@ def _feature_json(conn, row) -> dict[str, Any]:
             for r in runs
         ],
         "plan": json.loads(latest_plan["plan_json"]) if latest_plan else None,
+        # Why the most recent run stopped, so a failure survives a page reload.
+        "error": runs[-1]["error"] if runs else None,
+        "latest_run_id": runs[-1]["id"] if runs else None,
     }
 
 
@@ -300,6 +303,7 @@ def list_runs(workspace_id: str) -> list[dict[str, Any]]:
                 "iteration": r["iteration"],
                 "intent": r["intent"],
                 "status": r["status"],
+                "error": r["error"],
                 "head_sha": r["head_sha"],
                 "started_at": r["started_at"],
                 "ended_at": r["ended_at"],
@@ -458,6 +462,27 @@ def decline(feature_id: str) -> dict[str, Any]:
     }
 
 
+@api.post("/features/{feature_id}/retry")
+def retry(feature_id: str) -> dict[str, Any]:
+    """Run the approved plan again, unchanged.
+
+    A run can fail for reasons that have nothing to do with the plan — a rate limit, a harness
+    crash, a network blip. Making someone re-plan to recover from that wastes a planning call and
+    loses the executor session that already knows the codebase.
+    """
+    row, payload = _load(feature_id)
+    if not payload["plan"]:
+        raise HTTPException(400, "this feature has no approved plan to retry")
+    if jobs.is_busy(row["id"]):
+        raise HTTPException(409, "this feature is already running")
+
+    with db.connect() as conn:
+        db.set_feature_status(conn, row["id"], "approved")
+    jobs.emit(row["id"], "status", status="approved")
+    jobs.start_cycle(row["id"])
+    return _load(feature_id)[1]
+
+
 @api.post("/features/{feature_id}/pivot")
 def pivot(feature_id: str, body: Pivot) -> dict[str, Any]:
     row, _ = _load(feature_id)
@@ -487,6 +512,69 @@ def diff(feature_id: str) -> dict[str, Any]:
             for t in trees_mod.touched(trees)
         ],
     }
+
+
+@api.get("/features/{feature_id}/log")
+def read_log(feature_id: str, run_id: str | None = None) -> dict[str, Any]:
+    """Replay a run's recorded harness output.
+
+    The live stream only exists while a tab is open, so a failed run had nothing to show after a
+    reload. The raw JSONL is already on disk for exactly this — it is replayed through the same
+    adapter the live view used, so what you read afterwards is what you would have watched.
+    """
+    row, payload = _load(feature_id)
+    target = run_id or payload["latest_run_id"]
+    if not target:
+        return {"run_id": None, "stages": []}
+
+    workspace_harness = {}
+    with db.connect() as conn:
+        if ws := ws_mod.get(conn, row["workspace_id"] or ""):
+            workspace_harness = ws.harness
+
+    stages: list[dict[str, Any]] = []
+    directory = runs_dir(target)
+    if not directory.is_dir():
+        return {"run_id": target, "stages": []}
+
+    for file in sorted(directory.glob("*.jsonl")):
+        stage = file.stem.split("-")[0]
+        name = workspace_harness.get(stage if stage != "fix" else "execute", "claude")
+        try:
+            harness = registry.get(name)
+        except KeyError:
+            continue
+
+        lines: list[dict[str, Any]] = []
+        for raw in file.read_text(errors="replace").splitlines():
+            if not raw.strip():
+                continue
+            try:
+                payload_json = json.loads(raw)
+            except json.JSONDecodeError:
+                continue
+            if not isinstance(payload_json, dict):
+                continue
+            for event in harness.parse(payload_json):
+                rendered = _render_event(event)
+                if rendered:
+                    lines.append(rendered)
+        stages.append({"stage": file.stem, "harness": name, "lines": lines[-400:]})
+
+    return {"run_id": target, "stages": stages}
+
+
+def _render_event(event: Any) -> dict[str, str] | None:
+    """One log line per event, matching what the live stream shows."""
+    kind = getattr(event, "kind", "")
+    if kind == "tool_call":
+        hint = event.input.get("file_path") or event.input.get("command") or ""
+        return {"tone": "dim", "text": f"{event.name} {str(hint)[:120]}".strip()}
+    if kind == "assistant_text" and event.text.strip():
+        return {"tone": "text", "text": event.text.strip()[:500]}
+    if kind == "result" and not event.ok:
+        return {"tone": "error", "text": event.error or "failed"}
+    return None
 
 
 @api.get("/features/{feature_id}/evidence")
@@ -543,6 +631,12 @@ def build_app() -> FastAPI:
         # Log it properly so a recurrence is diagnosable, and hand the UI something it can show.
         logging.getLogger("drove").exception("unhandled error on %s", request.url.path)
         return JSONResponse(status_code=500, content={"detail": f"{type(exc).__name__}: {exc}"})
+
+    @app.exception_handler(jobs.JobError)
+    def _busy(request, exc):
+        # "already running" is a conflict, not a server fault. The status flips to failed a moment
+        # before the job's future settles, so a fast retry can legitimately land in that window.
+        return JSONResponse(status_code=409, content={"detail": str(exc)})
 
     @app.exception_handler(WorkspaceError)
     @app.exception_handler(WorktreeError)

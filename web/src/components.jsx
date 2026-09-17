@@ -149,7 +149,7 @@ export function Gate({ busy, onApprove, onDecline, onRevise }) {
   )
 }
 
-export function Log({ lines, connected }) {
+export function Log({ lines, replay, connected }) {
   const ref = useRef(null)
   const pinned = useRef(true)
 
@@ -165,10 +165,24 @@ export function Log({ lines, connected }) {
 
   return (
     <div className="card">
-      <h3 className="eyebrow">{connected ? 'Live' : 'Reconnecting…'}</h3>
+      <h3 className="eyebrow">
+        {lines.length > 0 ? (connected ? 'Live' : 'Reconnecting…') : 'Recorded'}
+      </h3>
       <div className="log" ref={ref} onScroll={onScroll}>
-        {lines.length === 0 && <div className="dim">nothing running</div>}
         {lines.map((line, i) => <div className={line.tone} key={i}>{line.text}</div>)}
+
+        {/* Nothing is streaming, so replay what the run recorded. The live view only exists while
+            a tab is open, which left a finished or failed run with an empty panel. */}
+        {lines.length === 0 && replay?.stages?.map((s) => (
+          <div key={s.stage}>
+            <div className="stage">{s.stage} · {s.harness}</div>
+            {s.lines.map((line, i) => <div className={line.tone} key={i}>{line.text}</div>)}
+          </div>
+        ))}
+
+        {lines.length === 0 && !replay?.stages?.length && (
+          <div className="dim">nothing recorded for this run</div>
+        )}
       </div>
     </div>
   )

@@ -86,6 +86,11 @@ MIGRATIONS: list[str] = [
     """
     ALTER TABLE workspaces ADD COLUMN models TEXT;
     """,
+    # 4 — why a run failed. It was emitted over SSE and nowhere else, so refreshing the page lost
+    # the only account of what went wrong.
+    """
+    ALTER TABLE runs ADD COLUMN error TEXT;
+    """,
 ]
 
 # Data migrations that need real code. Keyed by the schema version they run after.
@@ -289,12 +294,22 @@ def set_run_plan(conn: sqlite3.Connection, run_id: str, plan: dict[str, Any]) ->
 
 
 def finish_run(
-    conn: sqlite3.Connection, run_id: str, status: str, head_sha: str | None = None
+    conn: sqlite3.Connection,
+    run_id: str,
+    status: str,
+    head_sha: str | None = None,
+    error: str | None = None,
 ) -> None:
     conn.execute(
-        "UPDATE runs SET status = ?, head_sha = ?, ended_at = ? WHERE id = ?",
-        (status, head_sha, time.time(), run_id),
+        "UPDATE runs SET status = ?, head_sha = ?, ended_at = ?, error = ? WHERE id = ?",
+        (status, head_sha, time.time(), error, run_id),
     )
+
+
+def latest_run(conn: sqlite3.Connection, feature_id: str) -> sqlite3.Row | None:
+    return conn.execute(
+        "SELECT * FROM runs WHERE feature_id = ? ORDER BY iteration DESC LIMIT 1", (feature_id,)
+    ).fetchone()
 
 
 def list_runs(conn: sqlite3.Connection, feature_id: str) -> list[sqlite3.Row]:

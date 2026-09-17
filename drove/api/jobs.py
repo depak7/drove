@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 from concurrent.futures import Future
 from dataclasses import dataclass
 from typing import Any
@@ -87,10 +88,16 @@ def _spawn(feature_id: str, coro) -> None:
         async with _semaphore:
             try:
                 await coro
-            except Exception as exc:  # surfaced to the UI, never swallowed
-                emit(feature_id, "error", message=str(exc))
+            except Exception as exc:
+                # Record why, and on the run — not only on the event stream, which is gone the
+                # moment the page reloads and takes the only account of the failure with it.
+                reason = f"{type(exc).__name__}: {exc}".strip()
+                logging.getLogger("drove").exception("run failed for feature %s", feature_id)
                 with db.connect() as conn:
+                    if run := db.latest_run(conn, feature_id):
+                        db.finish_run(conn, run["id"], "failed", error=reason[:4000])
                     db.set_feature_status(conn, feature_id, "failed")
+                emit(feature_id, "error", message=reason)
                 emit(feature_id, "status", status="failed")
 
     loop = _loop

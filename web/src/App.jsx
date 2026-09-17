@@ -28,6 +28,7 @@ export default function App() {
   const [tab, setTab] = useState('plan')
   const [diff, setDiff] = useState(null)
   const [evidence, setEvidence] = useState('')
+  const [replay, setReplay] = useState(null)
   const [task, setTask] = useState('')
   const [error, setError] = useState('')
 
@@ -88,6 +89,7 @@ export default function App() {
     if (!current) return
     if (tab === 'diff') api.diff(current.id).then(setDiff).catch(() => setDiff(null))
     if (tab === 'evidence') api.evidence(current.id).then((d) => setEvidence(d.markdown)).catch(() => setEvidence(''))
+    if (tab === 'live') api.log(current.id).then(setReplay).catch(() => setReplay(null))
   }, [tab, current?.id, current?.status])
 
   const act = async (fn) => {
@@ -396,7 +398,7 @@ function FirstRun({ onCreate }) {
   )
 }
 
-function Detail({ feature, logs, connected, tab, setTab, diff, evidence, onBack, act, onDiscard }) {
+function Detail({ feature, logs, replay, connected, tab, setTab, diff, evidence, onBack, act, onDiscard }) {
   const gated = feature.status === 'awaiting_approval'
   const stopped = !gated && Boolean(NEEDS_YOU[feature.status])
   return (
@@ -443,6 +445,7 @@ function Detail({ feature, logs, connected, tab, setTab, diff, evidence, onBack,
               feature={feature}
               busy={feature.busy}
               onPivot={(intent) => act(() => api.pivot(feature.id, intent))}
+              onRetry={feature.plan ? () => act(() => api.retry(feature.id)) : null}
               onDiscard={() => act(async () => { await api.decline(feature.id); onDiscard() })}
             />
           )}
@@ -451,7 +454,7 @@ function Detail({ feature, logs, connected, tab, setTab, diff, evidence, onBack,
           )}
         </>
       )}
-      {tab === 'live' && <Log lines={logs} connected={connected} />}
+      {tab === 'live' && <Log lines={logs} replay={replay} connected={connected} />}
       {tab === 'diff' && <Diff text={diff?.diff} repos={diff?.repos} />}
       {tab === 'evidence' && (
         evidence
@@ -468,7 +471,7 @@ function Detail({ feature, logs, connected, tab, setTab, diff, evidence, onBack,
  * A run that stopped needs a decision as much as a plan does, so it gets the same pinned bar.
  * Previously these looked like finished work with an unusual label.
  */
-function Stopped({ feature, busy, onPivot, onDiscard }) {
+function Stopped({ feature, busy, onPivot, onRetry, onDiscard }) {
   const [intent, setIntent] = useState('')
   const info = NEEDS_YOU[feature.status]
   const send = () => {
@@ -480,6 +483,7 @@ function Stopped({ feature, busy, onPivot, onDiscard }) {
   return (
     <div className="gatebar stopped">
       <div className="reason">{info.why}</div>
+      {feature.error && <pre className="failure">{feature.error}</pre>}
       <textarea
         rows={2}
         placeholder="Tell it what to do differently, and it will re-plan on the same branch…"
@@ -492,6 +496,11 @@ function Stopped({ feature, busy, onPivot, onDiscard }) {
         <span className="eyebrow">{info.verb}</span>
         <span className="grow" />
         <button className="ghost danger" disabled={busy} onClick={onDiscard}>Discard</button>
+        {onRetry && (
+          <button disabled={busy} onClick={onRetry} title="Run the same plan again, unchanged">
+            Try again
+          </button>
+        )}
         <button className="primary" disabled={busy || !intent.trim()} onClick={send}>
           Re-plan with this
         </button>
