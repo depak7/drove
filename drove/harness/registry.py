@@ -75,6 +75,19 @@ PRESETS: dict[str, Preset] = {
     ),
 }
 
+# Who makes each CLI. The evidence pack names it because "a different model reviewed this" is a
+# weaker claim than "a model from a different lab reviewed this", and the second is what actually
+# makes the review independent — different training data, different failure modes, different
+# blind spots.
+LAB = {
+    "claude": "Anthropic",
+    "codex": "OpenAI",
+    # opencode routes to whichever provider the chosen model belongs to.
+    "opencode": "varies by model",
+    "cursor-agent": "Cursor",
+}
+
+
 PLANNED = {"cursor-agent": "curl https://cursor.com/install -fsS | bash"}
 
 

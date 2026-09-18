@@ -127,6 +127,17 @@ def combined_diff(trees: FeatureTrees) -> str:
     return "\n\n".join(parts)
 
 
+def combined_stat(trees: FeatureTrees) -> str:
+    """`git diff --stat` across every changed repo, labelled when there is more than one."""
+    multi = len(touched(trees)) > 1
+    parts = []
+    for tree in touched(trees):
+        stat = git.git(tree.path, "diff", "--stat", f"{tree.base}...HEAD", check=False)
+        if stat.strip():
+            parts.append(f"{tree.repo.name}:\n{stat}" if multi else stat)
+    return "\n\n".join(parts)
+
+
 def changed_files(trees: FeatureTrees) -> list[str]:
     files: list[str] = []
     for tree in touched(trees):
