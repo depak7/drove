@@ -1,7 +1,9 @@
 import { useCallback, useEffect, useState } from 'react'
 import { api } from './api'
 import { useStream } from './useStream'
-import { BrowserChecks, Diff, Gate, Log, Pill, Plan, Rail, Review, StageLegend } from './components'
+import {
+  BrowserChecks, Diff, Evidence, Gate, Log, Pill, Plan, Rail, Review, StageLegend,
+} from './components'
 import { WorkspaceSheet } from './Workspaces'
 import { SettingsSheet } from './Settings'
 import { Mark, Wordmark } from './Logo'
@@ -27,7 +29,7 @@ export default function App() {
   const [settings, setSettings] = useState(false)
   const [tab, setTab] = useState('plan')
   const [diff, setDiff] = useState(null)
-  const [evidence, setEvidence] = useState('')
+  const [evidence, setEvidence] = useState(null)
   const [replay, setReplay] = useState(null)
   const [browser, setBrowser] = useState(null)
   const [review, setReview] = useState(null)
@@ -90,7 +92,7 @@ export default function App() {
   useEffect(() => {
     if (!current) return
     if (tab === 'diff') api.diff(current.id).then(setDiff).catch(() => setDiff(null))
-    if (tab === 'evidence') api.evidence(current.id).then((d) => setEvidence(d.markdown)).catch(() => setEvidence(''))
+    if (tab === 'evidence') api.evidence(current.id).then(setEvidence).catch(() => setEvidence(null))
     if (tab === 'live') api.log(current.id).then(setReplay).catch(() => setReplay(null))
     if (tab === 'browser') api.browser(current.id).then(setBrowser).catch(() => setBrowser(null))
     if (tab === 'review') api.review(current.id).then(setReview).catch(() => setReview(null))
@@ -481,7 +483,13 @@ function Detail({
       {tab === 'diff' && <Diff text={diff?.diff} repos={diff?.repos} />}
       {tab === 'review' && <Review data={review} />}
       {tab === 'browser' && <BrowserChecks featureId={feature.id} data={browser} />}
-      {tab === 'evidence' && <pre className="block">{evidence}</pre>}
+      {tab === 'evidence' && (
+        <Evidence
+          pack={evidence?.pack}
+          markdown={evidence?.markdown}
+          onCopy={(md) => navigator.clipboard?.writeText(md)}
+        />
+      )}
     </div>
   )
 }

@@ -818,3 +818,43 @@ button.chain:hover { background: var(--surface-2); }
 .sev { font-size: 10px; font-weight: 700; letter-spacing: .05em; text-transform: uppercase; }
 .sev.critical, .sev.major { color: var(--bad); }
 .sev.minor { color: var(--text-3); }
+
+/* readable prose: a measure, and air between paragraphs */
+.prose p { margin: 0 0 11px; max-width: 68ch; line-height: 1.7; }
+.prose p:last-child { margin-bottom: 0; }
+.risk-tag {
+  display: inline-block; margin-right: 8px;
+  font-size: 9.5px; font-weight: 700; letter-spacing: .07em;
+  color: var(--warn); background: var(--warn-soft);
+  border: 1px solid #D9A44140; border-radius: 4px; padding: 1px 6px;
+  vertical-align: 1px;
+}
+.card ul li, .card ol li { max-width: 68ch; }
+
+/* evidence */
+.ev-head { display: flex; align-items: center; margin-bottom: 14px; }
+.ev-head h3 { margin: 0; }
+.factrow { display: grid; grid-template-columns: repeat(auto-fit, minmax(118px, 1fr)); gap: 14px; }
+.fact { display: grid; gap: 3px; min-width: 0; }
+.fact .k { font-size: 9.5px; font-weight: 700; letter-spacing: .09em; text-transform: uppercase; color: var(--text-3); }
+.fact .v { font-size: 13px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.fact .v.warn { color: var(--warn); }
+
+.statblock {
+  margin: 0; padding: 11px 13px; max-height: 320px; overflow: auto;
+  background: #070505; border: 1px solid var(--line); border-radius: var(--radius-sm);
+  font-family: var(--mono); font-size: 11.5px; line-height: 1.6; white-space: pre-wrap;
+}
+.check-item { border-top: 1px solid var(--line); padding: 10px 0; }
+.check-item:first-of-type { border-top: none; padding-top: 0; }
+.check-item summary { display: flex; align-items: baseline; gap: 9px; cursor: pointer; font-size: 12.5px; list-style: none; }
+.check-item summary::-webkit-details-marker { display: none; }
+.check-item summary .ok { color: var(--ok); font-size: 11px; font-weight: 600; }
+.check-item summary .bad { color: var(--bad); font-size: 11px; font-weight: 600; }
+.check-item summary code { font-family: var(--mono); font-size: 11px; color: var(--text-3); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.check-item summary .dur { margin-left: auto; font-size: 11px; color: var(--text-3); }
+.check-item .statblock { margin-top: 10px; }
+
+.sessrow { display: flex; align-items: baseline; gap: 10px; padding: 5px 0; font-size: 12.5px; }
+.sessrow b { min-width: 76px; font-weight: 600; }
+.sessrow code { font-family: var(--mono); font-size: 11.5px; color: var(--text-2); }

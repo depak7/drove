@@ -56,13 +56,63 @@ export function StageLegend({ status }) {
   )
 }
 
+/**
+ * Model prose arrives as one dense block. Break it so it can be read.
+ *
+ * Grouped by length rather than by sentence count: planners write long sentences, and three of
+ * them at two hundred characters each is the wall this exists to prevent, while three short ones
+ * are a normal paragraph. A blank line in the source is always honoured; a single sentence is
+ * never split, however long it is.
+ */
+const BLOCK_CHARS = 260
+
+export function Prose({ text, limit = BLOCK_CHARS }) {
+  const paragraphs = String(text ?? '').trim().split(/\n\s*\n/).filter(Boolean)
+
+  const blocks = paragraphs.flatMap((para) => {
+    const clean = para.replace(/\s+/g, ' ').trim()
+    const sentences = clean.match(/[^.!?]+[.!?]+(\s|$)|[^.!?]+$/g)
+    if (!sentences || sentences.length < 2) return [clean]
+
+    const out = []
+    let current = ''
+    for (const sentence of sentences) {
+      // Start a new block once this one has had its say, but never mid-sentence.
+      if (current && (current + sentence).length > limit) {
+        out.push(current.trim())
+        current = sentence
+      } else {
+        current += sentence
+      }
+    }
+    if (current.trim()) out.push(current.trim())
+    return out
+  })
+
+  return <div className="prose">{blocks.map((b, i) => <p key={i}>{b}</p>)}</div>
+}
+
+/** Planners prefix their strongest risks with a label; pull it out so it can be scanned. */
+function Risk({ text }) {
+  const match = String(text).match(/^([A-Z][A-Z \-]{3,40}?)\s*[:—-]\s*(.+)$/s)
+  return (
+    <div className="risk">
+      <span />
+      <span>
+        {match && <b className="risk-tag">{match[1].trim()}</b>}
+        {match ? match[2].trim() : text}
+      </span>
+    </div>
+  )
+}
+
 export function Plan({ plan }) {
   if (!plan) return <div className="card"><p className="mono" style={{ color: 'var(--text-3)' }}>no plan yet</p></div>
   return (
     <>
       <div className="card">
         <h3 className="eyebrow">Approach</h3>
-        <p>{plan.summary}</p>
+        <Prose text={plan.summary} />
       </div>
 
       {plan.steps?.length > 0 && (
@@ -92,7 +142,7 @@ export function Plan({ plan }) {
       {plan.risks?.length > 0 && (
         <div className="card">
           <h3 className="eyebrow">Risks &amp; assumptions</h3>
-          {plan.risks.map((r, i) => <div className="risk" key={i}><span /><span>{r}</span></div>)}
+          {plan.risks.map((r, i) => <Risk text={r} key={i} />)}
         </div>
       )}
     </>
@@ -361,5 +411,119 @@ export function Review({ data }) {
         </p>
       )}
     </>
+  )
+}
+
+
+/**
+ * The evidence pack, rendered from its structured form.
+ *
+ * It used to be the markdown file dumped into a <pre>, which is a monospace wall nobody reads —
+ * the least readable presentation of the most important document. The .md still exists for
+ * sending to someone outside the app; in here the same data is laid out.
+ */
+export function Evidence({ pack, markdown, onCopy }) {
+  if (!pack || !Object.keys(pack).length) {
+    return <div className="card"><p style={{ color: 'var(--text-3)' }}>
+      No evidence pack yet — one is written when a run finishes.
+    </p></div>
+  }
+
+  const verify = pack.verify ?? []
+  const failed = verify.filter((c) => c.exit_code !== 0)
+
+  return (
+    <>
+      <div className="card">
+        <div className="ev-head">
+          <h3 className="eyebrow">Evidence</h3>
+          <span className="grow" />
+          {markdown && (
+            <button className="ghost tiny" onClick={() => onCopy?.(markdown)}>
+              Copy as markdown
+            </button>
+          )}
+        </div>
+
+        <div className="factrow">
+          <Fact k="Branch" v={pack.branch} mono />
+          <Fact k="Into" v={pack.base} mono />
+          <Fact k="Commit" v={(pack.head_sha ?? '—').slice(0, 12)} mono />
+          <Fact
+            k="Reviewed by"
+            v={pack.independent_review ? (pack.stages?.review?.harness ?? 'yes') : 'same harness'}
+            warn={!pack.independent_review}
+          />
+          <Fact
+            k="Checks"
+            v={verify.length ? (failed.length ? `${failed.length} failed` : 'all passed') : 'none set'}
+            warn={Boolean(failed.length) || !verify.length}
+          />
+          <Fact
+            k="Cost"
+            v={pack.cost_usd != null ? `$${pack.cost_usd.toFixed(4)}` : '—'}
+          />
+        </div>
+      </div>
+
+      {pack.diff_stat && (
+        <div className="card">
+          <h3 className="eyebrow">Files changed</h3>
+          <pre className="statblock">{pack.diff_stat.trim()}</pre>
+        </div>
+      )}
+
+      {verify.length > 0 && (
+        <div className="card">
+          <h3 className="eyebrow">Checks</h3>
+          {verify.map((check, i) => (
+            <details className="check-item" key={i} open={check.exit_code !== 0}>
+              <summary>
+                <span className={check.exit_code === 0 ? 'ok' : 'bad'}>
+                  {check.exit_code === 0 ? 'passed' : `failed (${check.exit_code})`}
+                </span>
+                <b>{check.repo ? `${check.repo}/${check.name}` : check.name}</b>
+                <code>{check.command}</code>
+                <span className="dur">{check.duration_s}s</span>
+              </summary>
+              <pre className="statblock">{(check.output || '(no output)').trim()}</pre>
+            </details>
+          ))}
+        </div>
+      )}
+
+      {pack.files_changed?.length > 0 && !pack.diff_stat && (
+        <div className="card">
+          <h3 className="eyebrow">Files changed</h3>
+          <ul>{pack.files_changed.map((f) => <li key={f}><code>{f}</code></li>)}</ul>
+        </div>
+      )}
+
+      {Object.keys(pack.sessions ?? {}).length > 0 && (
+        <div className="card">
+          <h3 className="eyebrow">Reopen any of this</h3>
+          <p style={{ fontSize: 12.5, color: 'var(--text-3)', margin: '0 0 10px' }}>
+            Each is a real conversation you can continue from its worktree.
+          </p>
+          {Object.entries(pack.sessions).map(([stage, id]) => (
+            <div className="sessrow" key={stage}>
+              <b>{stage}</b>
+              <code>{id}</code>
+            </div>
+          ))}
+        </div>
+      )}
+    </>
+  )
+}
+
+function Fact({ k, v, mono, warn }) {
+  // An empty string renders as nothing, which reads as a broken panel rather than a missing value.
+  const shown = v === undefined || v === null || v === '' ? '—' : v
+  return (
+    <div className="fact">
+      <span className="k">{k}</span>
+      <span className={`v ${mono ? 'mono' : ''} ${warn ? 'warn' : ''}`}>{shown}</span>
+    </div>
   )
 }

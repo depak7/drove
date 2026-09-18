@@ -175,5 +175,9 @@ def test_a_tab_is_only_offered_when_there_is_something_behind_it(client):
         db.finish_run(conn, run["id"], "delivered", head_sha="abc123")
     assert client.get(f"/api/features/{feature['id']}").json()["has"]["diff"] is True
 
+    # Keyed on the structured pack, because that is what the app renders.
     (directory / "evidence.md").write_text("# run\n")
+    assert client.get(f"/api/features/{feature['id']}").json()["has"]["evidence"] is False
+
+    (directory / "evidence.json").write_text('{"reviews": []}')
     assert client.get(f"/api/features/{feature['id']}").json()["has"]["evidence"] is True

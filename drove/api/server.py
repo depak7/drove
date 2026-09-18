@@ -145,7 +145,9 @@ def _available(row, runs) -> dict[str, bool]:
         "log": bool(run_dir and run_dir.is_dir() and any(run_dir.glob("*.jsonl"))),
         # Something was committed, so there is a diff to read.
         "diff": any(r["head_sha"] for r in runs),
-        "evidence": any((runs_dir(r["id"]) / "evidence.md").exists() for r in runs),
+        # Keyed on the structured pack, which is what the app renders; the markdown beside it is
+        # for sending to someone outside the app.
+        "evidence": any((runs_dir(r["id"]) / "evidence.json").exists() for r in runs),
         "browser": any((runs_dir(r["id"]) / "screens").is_dir() for r in runs),
         "review": any((runs_dir(r["id"]) / "evidence.json").exists() for r in runs),
     }
@@ -648,17 +650,20 @@ def screenshot(feature_id: str, name: str) -> FileResponse:
 
 @api.get("/features/{feature_id}/evidence")
 def read_evidence(feature_id: str) -> dict[str, Any]:
+    """The evidence pack: structured for the app, markdown for sending elsewhere.
+
+    The app renders `pack`; the markdown is what you hand to someone outside it. Keyed on the JSON
+    because that is what the UI actually draws — keying on the markdown meant a run that had a
+    pack still showed "no evidence yet".
+    """
     _, payload = _load(feature_id)
-    for run in reversed(payload["runs"]):
-        path = runs_dir(run["id"]) / "evidence.md"
+    run_id, data = _evidence_json(payload)
+    markdown = ""
+    if run_id:
+        path = runs_dir(run_id) / "evidence.md"
         if path.exists():
-            json_path = path.with_suffix(".json")
-            return {
-                "run_id": run["id"],
-                "markdown": path.read_text(),
-                "summary": json.loads(json_path.read_text()) if json_path.exists() else None,
-            }
-    return {"run_id": None, "markdown": "", "summary": None}
+            markdown = path.read_text()
+    return {"run_id": run_id, "markdown": markdown, "pack": data}
 
 
 @api.get("/events")
