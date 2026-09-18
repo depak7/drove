@@ -155,7 +155,9 @@ def test_a_tab_is_only_offered_when_there_is_something_behind_it(client):
     feature = client.post("/api/features", json={"task": "x", "workspace_id": ws.id}).json()
 
     fresh = client.get(f"/api/features/{feature['id']}").json()["has"]
-    assert fresh == {"plan": False, "log": False, "diff": False, "evidence": False}
+    assert fresh == {
+        "plan": False, "log": False, "diff": False, "evidence": False, "browser": False
+    }
 
     with db.connect() as conn:
         run = db.list_runs(conn, feature["id"])[-1]

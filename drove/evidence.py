@@ -34,6 +34,7 @@ class Evidence:
     files_changed: list[str] = field(default_factory=list)
     reviews: list[ReviewVerdict] = field(default_factory=list)
     verify: VerifyOutcome | None = None
+    browser: object | None = None
     cost_usd: float | None = None
     tokens_in: int = 0
     tokens_out: int = 0
@@ -57,6 +58,7 @@ class Evidence:
             "plan": self.plan.model_dump(),
             "reviews": [r.model_dump() for r in self.reviews],
             "verify": [asdict(c) for c in (self.verify.checks if self.verify else [])],
+            "browser": [asdict(c) for c in getattr(self.browser, "checks", [])],
             "cost_usd": self.cost_usd,
             "tokens_in": self.tokens_in,
             "tokens_out": self.tokens_out,
@@ -121,6 +123,24 @@ class Evidence:
                 lines.append(check.output.strip()[-2000:] or "(no output)")
                 lines.append("```")
                 lines.append("")
+
+        if self.browser is not None:
+            lines += ["## In a browser", ""]
+            if getattr(self.browser, "skipped", ""):
+                lines.append(f"_skipped: {self.browser.skipped}_")
+            for check in getattr(self.browser, "checks", []):
+                mark = "ok" if check.ok else "PROBLEM"
+                lines.append(f"**{check.path}** — {mark} — {check.title or 'no title'}")
+                for err in check.console_errors:
+                    lines.append(f"- console: `{err}`")
+                for req in check.failed_requests:
+                    lines.append(f"- request: `{req}`")
+                if check.error:
+                    lines.append(f"- {check.error}")
+                if check.screenshot:
+                    lines.append(f"- ![{check.path}](screens/{check.screenshot})")
+                lines.append("")
+            lines.append("")
 
         lines += ["## Cost", ""]
         dollars = f"${self.cost_usd:.4f}" if self.cost_usd is not None else "—"

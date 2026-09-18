@@ -215,3 +215,61 @@ export function Diff({ text, repos }) {
     </>
   )
 }
+
+
+/**
+ * What the app looked like when it was opened.
+ *
+ * Tests prove the code is correct; they cannot tell you the page rendered blank because one
+ * component threw. This is the shallowest check that it actually runs — and the screenshot is
+ * usually the fastest way to see that it did not.
+ */
+export function BrowserChecks({ featureId, data }) {
+  if (!data?.checks?.length) {
+    return <div className="card"><p style={{ color: 'var(--text-3)' }}>
+      No browser checks recorded. Add a <code>[browser]</code> section to
+      <code> .drove.toml</code> to have Drove open the app after each run.
+    </p></div>
+  }
+
+  return (
+    <>
+      {data.checks.map((check) => {
+        const problems = [
+          ...check.console_errors.map((e) => ['console', e]),
+          ...check.failed_requests.map((r) => ['request', r]),
+          ...(check.error ? [['load', check.error]] : []),
+        ]
+        return (
+          <div className={`card shot ${problems.length ? 'bad' : ''}`} key={check.path}>
+            <div className="shot-head">
+              <b className="mono">{check.path}</b>
+              <span className="dim">{check.title}</span>
+              <span className="grow" />
+              <span className={problems.length ? 'flag' : 'okmark'}>
+                {problems.length ? `${problems.length} problem${problems.length === 1 ? '' : 's'}` : 'clean'}
+              </span>
+            </div>
+
+            {problems.length > 0 && (
+              <ul className="problems">
+                {problems.map(([kind, text], i) => (
+                  <li key={i}><em>{kind}</em> {text}</li>
+                ))}
+              </ul>
+            )}
+
+            {check.screenshot && (
+              <img
+                className="screenshot"
+                alt={`${check.path} rendered`}
+                loading="lazy"
+                src={`/api/features/${featureId}/screens/${check.screenshot}`}
+              />
+            )}
+          </div>
+        )
+      })}
+    </>
+  )
+}

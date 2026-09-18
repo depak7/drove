@@ -10,9 +10,11 @@ from __future__ import annotations
 from collections.abc import Callable
 from dataclasses import dataclass, field
 
+from drove.config import runs_dir
 from drove.events import HarnessEvent
 from drove.pipeline.schemas import PlanDoc, ReviewVerdict
 from drove.pipeline.stages import review as review_stage
+from drove.pipeline.stages import browser as browser_stage
 from drove.pipeline.stages import verify as verify_stage
 from drove.pipeline.stages.execute import ExecuteOutcome, run_execute
 from drove.vcs import tree as trees_mod
@@ -28,6 +30,7 @@ class RunOutcome:
     execute: ExecuteOutcome | None = None
     reviews: list[ReviewVerdict] = field(default_factory=list)
     verify: verify_stage.VerifyOutcome | None = None
+    browser: browser_stage.BrowserOutcome | None = None
     sessions: dict[str, str] = field(default_factory=dict)
     files_changed: list[str] = field(default_factory=list)
     repos_touched: list[str] = field(default_factory=list)
@@ -138,6 +141,28 @@ async def run_cycle(
             )
             outcome.note = f"project checks failed: {names}"
             return _finish(outcome, costs, trees)
+
+    # --- BROWSER --------------------------------------------------------------------------
+    # Advisory. Browser checks are the flakiest thing in any pipeline, and a stage that blocks
+    # delivery before it has earned trust is a stage people switch off. Recorded either way.
+    #
+    # Reached only when verify passed, because verify failing already stopped the run for a human,
+    # and booting a dev server to photograph an app whose tests are red adds a minute for
+    # information nobody asked for yet.
+    for tree in trees_mod.touched(trees):
+        config = tree.repo.config.browser
+        if not config:
+            continue
+        report("browser", f"opening {config.get('url', 'the app')}")
+        outcome.browser = await browser_stage.run_browser(
+            tree.path, config, runs_dir(run_id) / "screens"
+        )
+        if outcome.browser.skipped:
+            report("browser", f"skipped: {outcome.browser.skipped}")
+        elif not outcome.browser.passed:
+            names = ", ".join(c.path for c in outcome.browser.failures)
+            outcome.note = f"browser checks flagged {names}"
+        break  # one app per feature; the first configured repo owns it
 
     outcome.status = "delivered"
     return _finish(outcome, costs, trees)

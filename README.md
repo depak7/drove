@@ -51,4 +51,43 @@ the recovery command printed, per repo independently.
 name and have to be merged together — the evidence pack and the UI say so, but nothing can enforce
 it.
 
-Status: M0 — pipeline spine, Claude adapter, plan stage.
+## Browser checks (optional)
+
+Your tests prove the code is correct. They cannot tell you the page is blank because one component
+throws on render — the build passes, the linter passes, and the app is broken.
+
+Add a `[browser]` section to a repo's `.drove.toml` and Drove starts the app after a run, opens the
+pages you name, and records console errors, failed requests and a screenshot of each:
+
+```toml
+[browser]
+start = "npm run dev"
+dir   = "web"                      # relative to the repo, optional
+url   = "http://localhost:5173"
+paths = ["/", "/settings"]
+```
+
+Needs the extra: `uv tool install "drove[browser]"`, then `playwright install chromium`.
+
+It is **advisory** — findings appear in the evidence pack and in the app, but never fail a run on
+their own. It refuses to start if something is already serving that URL, rather than silently
+testing someone else's server and reporting a pass for work that never ran.
+
+## Developing
+
+```bash
+uv tool install --force --reinstall .   # --reinstall matters: --force alone reuses uv's cached wheel
+uv run --extra dev pytest               # offline
+uv run --extra dev pytest -m live       # spends tokens
+
+cd web && npm install && npm run build  # rebuild the UI into drove/web/
+uv tool install --force --reinstall .   # required after a UI rebuild: `drove serve` serves the
+                                        # assets baked into the install, not the source tree
+```
+
+Built UI assets are committed. The install path is `uv tool install git+…`, which builds the wheel
+from the git tree, so anything not committed is not installed — and building at install time
+instead would put Node on the critical path for every user.
+
+Status: workspaces, cross-model review, the desktop shell, and optional browser checks.
+Pending work is listed in `TODO.md`.

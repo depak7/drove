@@ -146,6 +146,7 @@ def _available(row, runs) -> dict[str, bool]:
         # Something was committed, so there is a diff to read.
         "diff": any(r["head_sha"] for r in runs),
         "evidence": any((runs_dir(r["id"]) / "evidence.md").exists() for r in runs),
+        "browser": any((runs_dir(r["id"]) / "screens").is_dir() for r in runs),
     }
 
 
@@ -590,6 +591,37 @@ def _render_event(event: Any) -> dict[str, str] | None:
     if kind == "result" and not event.ok:
         return {"tone": "error", "text": event.error or "failed"}
     return None
+
+
+@api.get("/features/{feature_id}/browser")
+def browser_results(feature_id: str) -> dict[str, Any]:
+    """What the app looked like when it was opened, from the run's evidence."""
+    _, payload = _load(feature_id)
+    for run in reversed(payload["runs"]):
+        path = runs_dir(run["id"]) / "evidence.json"
+        if not path.exists():
+            continue
+        try:
+            data = json.loads(path.read_text())
+        except (OSError, json.JSONDecodeError):
+            continue
+        if data.get("browser"):
+            return {"run_id": run["id"], "checks": data["browser"]}
+    return {"run_id": None, "checks": []}
+
+
+@api.get("/features/{feature_id}/screens/{name}")
+def screenshot(feature_id: str, name: str) -> FileResponse:
+    _, payload = _load(feature_id)
+    # The name comes from a URL, so it is never trusted as a path: take the basename and require
+    # the resolved file to sit inside the run's own screens directory.
+    safe = Path(name).name
+    for run in reversed(payload["runs"]):
+        folder = (runs_dir(run["id"]) / "screens").resolve()
+        candidate = (folder / safe).resolve()
+        if candidate.is_file() and candidate.is_relative_to(folder):
+            return FileResponse(candidate, media_type="image/png")
+    raise HTTPException(404, "no such screenshot")
 
 
 @api.get("/features/{feature_id}/evidence")

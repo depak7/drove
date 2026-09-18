@@ -41,6 +41,9 @@ class RepoConfig:
     root: Path
     base_branch: str = "main"
     verify: dict[str, str] = field(default_factory=dict)
+    # Opt-in browser smoke checks; see pipeline/stages/browser.py. A separate table from [verify]
+    # because that one holds shell commands and this holds structure.
+    browser: dict = field(default_factory=dict)
     harness: dict[str, str] = field(default_factory=lambda: dict(DEFAULT_HARNESSES))
 
     @classmethod
@@ -54,7 +57,8 @@ class RepoConfig:
         return cls(
             root=root,
             base_branch=data.get("base_branch", "main"),
-            verify=data.get("verify", {}) or {},
+            verify={k: v for k, v in (data.get("verify") or {}).items() if isinstance(v, str)},
+            browser=data.get("browser", {}) or {},
             harness={**DEFAULT_HARNESSES, **(data.get("harness", {}) or {})},
         )
 
@@ -80,6 +84,14 @@ base_branch = "{base}"
 # build = "npm run build"
 # test  = "npm test"
 # lint  = "npm run lint"
+
+# [browser]
+# Opt-in smoke checks: start the app, open these pages, and record console errors, failed
+# requests and a screenshot of each. Advisory — it never fails a run on its own.
+# start = "npm run dev"
+# dir   = "web"
+# url   = "http://localhost:5173"
+# paths = ["/"]
 
 [harness]
 # Cross-harness by stage: whoever writes the code must not be the one who reviews it.
