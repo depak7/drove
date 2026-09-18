@@ -2,10 +2,12 @@
 
 from __future__ import annotations
 
+from pathlib import Path
+
 import pytest
 from fastapi.testclient import TestClient
 
-from drove import config
+from drove import config, db
 from drove.api import jobs, server
 from drove.api.bus import Bus
 from drove.vcs import git
@@ -31,6 +33,17 @@ def new_workspace(client, name="product", repos=("api",)):
 
 def new_feature(client, ws, task="add a thing"):
     return client.post("/api/features", json={"task": task, "workspace_id": ws["id"]}).json()
+
+
+def commit_feature(client, feature, repos=("api",), merge=()):
+    root = config.HOME / "worktrees" / "product" / feature["id"]
+    for name in repos:
+        worktree = root / name
+        (worktree / f"{name}-feature.py").write_text("y = 2\n")
+        git.git(worktree, "add", "-A")
+        git.git(worktree, "commit", "-qm", f"change {name}")
+    for name in merge:
+        git.git(client.projects / name, "merge", "--no-edit", "-q", feature["branch"])
 
 
 # --- workspaces --------------------------------------------------------------------------
@@ -142,6 +155,43 @@ def test_features_are_listed_per_workspace(client):
     assert [f["title"] for f in scoped] == ["in alpha"]
 
 
+def test_listing_marks_a_fully_merged_delivered_feature_landed(client):
+    ws = new_workspace(client, repos=("api", "web"))
+    feature = new_feature(client, ws)
+    commit_feature(client, feature, repos=("api", "web"), merge=("api", "web"))
+    with db.connect() as conn:
+        db.set_feature_status(conn, feature["id"], "delivered")
+
+    listed = client.get("/api/features").json()
+
+    assert listed[0]["status"] == "landed"
+
+
+def test_listing_keeps_a_half_merged_feature_delivered(client):
+    ws = new_workspace(client, repos=("api", "web"))
+    feature = new_feature(client, ws)
+    commit_feature(client, feature, repos=("api", "web"), merge=("api",))
+    with db.connect() as conn:
+        db.set_feature_status(conn, feature["id"], "delivered")
+
+    listed = client.get("/api/features").json()
+
+    assert listed[0]["status"] == "delivered"
+
+
+def test_listing_survives_a_delivered_feature_with_a_missing_repo(client):
+    ws = new_workspace(client)
+    feature = new_feature(client, ws)
+    with db.connect() as conn:
+        db.set_feature_status(conn, feature["id"], "delivered")
+    (client.projects / "api").rename(client.projects / "api-gone")
+
+    response = client.get("/api/features")
+
+    assert response.status_code == 200
+    assert response.json()[0]["status"] == "delivered"
+
+
 def test_approve_starts_the_cycle(client):
     feature = new_feature(client, new_workspace(client))
     client.started.clear()
@@ -189,6 +239,47 @@ def test_decline_keeps_repos_that_hold_work_and_says_which(client):
     assert set(body["kept"]) == {"api"}, "the untouched repo is cleaned up regardless"
     assert "not in main" in body["kept"]["api"]["reason"]
     assert client.get(f"/api/features/{feature['id']}").json()["status"] == "abandoned"
+
+
+def test_reclaim_removes_landed_worktrees_but_keeps_feature_history(client):
+    ws = new_workspace(client, repos=("api", "web"))
+    feature = new_feature(client, ws)
+    commit_feature(client, feature, repos=("api", "web"), merge=("api", "web"))
+    root = Path(feature["worktree"])
+    with db.connect() as conn:
+        db.set_feature_status(conn, feature["id"], "landed")
+
+    response = client.post(f"/api/features/{feature['id']}/reclaim")
+
+    assert response.json() == {"removed": True, "kept": {}}
+    assert not root.exists()
+    saved = client.get(f"/api/features/{feature['id']}").json()
+    assert saved["status"] == "landed"
+    assert len(saved["runs"]) == 1
+    assert saved["has"]["worktree"] is False
+
+
+def test_reclaim_reports_and_keeps_a_dirty_worktree(client):
+    ws = new_workspace(client, repos=("api", "web"))
+    feature = new_feature(client, ws)
+    dirty = Path(feature["worktree"]) / "api"
+    (dirty / "scratch.txt").write_text("unfinished")
+    with db.connect() as conn:
+        db.set_feature_status(conn, feature["id"], "landed")
+
+    body = client.post(f"/api/features/{feature['id']}/reclaim").json()
+
+    assert body["removed"] is False
+    assert "uncommitted" in body["kept"]["api"]["reason"]
+    assert dirty.exists()
+
+
+def test_reclaim_refuses_a_feature_that_is_not_landed(client):
+    feature = new_feature(client, new_workspace(client))
+
+    response = client.post(f"/api/features/{feature['id']}/reclaim")
+
+    assert response.status_code == 400
 
 
 def test_diff_reports_each_changed_repo(client):
@@ -266,6 +357,19 @@ def test_the_daemon_retires_stranded_work_before_serving_anything(client, state,
 
     assert body["status"] == "interrupted"
     assert "while it was implementing" in body["error"]
+
+
+def test_daemon_startup_marks_a_merged_delivered_feature_landed(client):
+    ws = new_workspace(client)
+    feature = new_feature(client, ws)
+    commit_feature(client, feature, merge=("api",))
+    with db.connect() as conn:
+        db.set_feature_status(conn, feature["id"], "delivered")
+
+    with TestClient(server.build_app()) as fresh:
+        body = fresh.get(f"/api/features/{feature['id']}").json()
+
+    assert body["status"] == "landed"
 
 
 def test_resuming_a_feature_interrupted_before_it_planned_replans_the_same_request(client):

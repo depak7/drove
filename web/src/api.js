@@ -65,5 +65,6 @@ export const api = {
   revise: (id, feedback) => post(`/api/features/${id}/revise`, { feedback }),
   approve: (id) => post(`/api/features/${id}/approve`),
   decline: (id) => post(`/api/features/${id}/decline`),
+  reclaim: (id) => post(`/api/features/${id}/reclaim`),
   pivot: (id, intent) => post(`/api/features/${id}/pivot`, { intent }),
 }

@@ -106,8 +106,10 @@ export default function App() {
 
   const act = async (fn) => {
     setError('')
-    try { await fn() } catch (e) { setError(String(e.message ?? e)) }
-    refresh()
+    let result
+    try { result = await fn() } catch (e) { setError(String(e.message ?? e)) }
+    await refresh()
+    return result
   }
 
   const create = () => {
@@ -474,6 +476,12 @@ function Detail({
           {!NEEDS_YOU[feature.status] && PIVOTABLE.includes(feature.status) && (
             <Pivot busy={feature.busy} onPivot={(intent) => act(() => api.pivot(feature.id, intent))} />
           )}
+          {feature.status === 'landed' && feature.has?.worktree && (
+            <Landed
+              busy={feature.busy}
+              onReclaim={() => act(() => api.reclaim(feature.id))}
+            />
+          )}
         </>
       )}
       {tab === 'live' && <Log lines={logs} replay={replay} connected={connected} />}
@@ -579,6 +587,31 @@ function Pivot({ busy, onPivot }) {
       />
       <div style={{ marginTop: 10 }}>
         <button disabled={busy || !intent.trim()} onClick={send}>Plan the pivot</button>
+      </div>
+    </div>
+  )
+}
+
+function Landed({ busy, onReclaim }) {
+  const [kept, setKept] = useState({})
+  const reclaim = async () => {
+    const result = await onReclaim()
+    setKept(result?.removed === false ? result.kept : {})
+  }
+  return (
+    <div className="card">
+      <h3 className="eyebrow">Landed</h3>
+      <p className="sub">
+        These branches are in base. Their checkout is only taking up disk space now.
+      </p>
+      {Object.entries(kept).map(([name, detail]) => (
+        <div className="failure" key={name}>
+          <b>{name}</b>: {detail.reason}
+          {detail.recovery && <div className="mono">{detail.recovery}</div>}
+        </div>
+      ))}
+      <div style={{ marginTop: 10 }}>
+        <button disabled={busy} onClick={reclaim}>Reclaim checkout</button>
       </div>
     </div>
   )

@@ -132,19 +132,7 @@ Nothing reads it. Today the engine just stops at `needs_human` after two rounds.
 - **Done when:** engine tests cover both sidings with stubs, and the evidence pack shows the
   three-way disagreement.
 
-### 2. Surface the Landed state
-
-`tree.has_landed()` is written and tested — **and called by nothing.** A merged feature sits in
-the UI as `delivered` forever.
-
-- On `GET /api/features`, compute it for features whose status is `delivered` (it shells out to
-  git per repo, so cache it or compute lazily — do not run it for every feature on every poll).
-- Add a `landed` status and pill. Once landed, offer teardown: that is exactly when the gate
-  permits it.
-- **Done when:** merging a feature's branches flips it to `landed` on the next refresh, with no
-  webhook or polling of a forge.
-
-### 3. Rate-limit back-pressure
+### 2. Rate-limit back-pressure
 
 `RateLimit` events are parsed and *displayed* (`ui.py`, `jobs.py`) and otherwise ignored. During
 development this hit 88% of the 5-hour window with nothing reacting.
@@ -155,7 +143,7 @@ development this hit 88% of the 5-hour window with nothing reacting.
 - Surface it: the UI should say "holding new runs, 5h window 91% used", not silently stall.
 - **Done when:** a test drives the gate with synthetic RateLimit events and asserts queueing.
 
-### 4. Parallel runs, actually tested
+### 3. Parallel runs, actually tested
 
 `MAX_CONCURRENT_RUNS = 2` in `api/jobs.py` and the semaphore has never run under load.
 
@@ -165,7 +153,7 @@ development this hit 88% of the 5-hour window with nothing reacting.
   confirm that is enough while two runs record sessions.
 - **Done when:** a test starts two cycles with stubbed stages and asserts isolation.
 
-### 5. Cost ledger
+### 4. Cost ledger
 
 `Result` carries exact token counts and, for claude, real cost. `sessions` stores per-stage
 figures. There is no per-feature or per-day view.
@@ -175,14 +163,14 @@ figures. There is no per-feature or per-day view.
   subscription auth — where the marginal cost genuinely *is* zero. Show `—`, never a guessed
   figure. (A `pricing.py` was deliberately deleted; see commit `ecbe221` for why.)
 
-### 6. `cursor-agent` adapter
+### 5. `cursor-agent` adapter
 
 Installed on this machine, listed in `registry.PLANNED`, honestly reported as unimplemented.
 
 - Follow `codex.py`. Record a real session as a fixture under `tests/fixtures/` and make it pass
   `tests/test_harness_conformance.py`, which is parametrized over every registered harness.
 
-### 7. Browser verification
+### 6. Browser verification
 
 Deferred from v1. Drove's own pitch includes browser-based user-flow testing.
 
@@ -190,7 +178,7 @@ Deferred from v1. Drove's own pitch includes browser-based user-flow testing.
   screenshots into the evidence pack.
 - Needs a new config block (`[verify.browser]`) and a way to say what "the app running" means.
 
-### 8. Delivery to GitHub
+### 7. Delivery to GitHub
 
 Everything stops at a local branch. `gh` is the obvious route.
 
@@ -198,7 +186,7 @@ Everything stops at a local branch. `gh` is the obvious route.
 - **For a cross-repo feature, the PRs must reference each other** and say they have to land
   together. This is presentation, not enforcement — see the caveat below.
 
-### 9. Packaging
+### 8. Packaging
 
 Currently `uv tool install git+…`, with UI assets committed because the wheel is built from the
 git tree.
@@ -229,6 +217,8 @@ Each cost real debugging time.
   deliberately sync (blocking sqlite and git would stall the SSE loop), so jobs are scheduled onto
   the loop with `run_coroutine_threadsafe` and the bus hops publishes across.
 - `uv tool install --force .` reuses a cached wheel for local paths. Use `--reinstall`.
+- Landed detection cannot recognize a feature branch deleted after merge. A missing branch is
+  indistinguishable from one force-deleted with unmerged work, so Drove leaves it `delivered`.
 
 ## The caveat that cannot be engineered away
 

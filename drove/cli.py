@@ -9,7 +9,7 @@ from pathlib import Path
 
 import typer
 
-from drove import __version__, config, db, evidence, ui
+from drove import __version__, config, db, evidence, landed, ui
 from drove.config import HOME, REPO_CONFIG, TEMPLATE, provisional_title
 from drove.harness import registry
 from drove.pipeline.engine import RunOutcome, run_cycle
@@ -505,6 +505,7 @@ def features_cmd(
             runs = db.list_runs(conn, row["id"])
             colour = {
                 "delivered": typer.colors.GREEN,
+                "landed": typer.colors.GREEN,
                 "failed": typer.colors.RED,
                 "verify_failed": typer.colors.RED,
                 "needs_human": typer.colors.YELLOW,
@@ -513,6 +514,52 @@ def features_cmd(
             typer.secho(f"  {row['id']}  {row['status']:<16}", fg=colour, nl=False)
             typer.echo(f"{row['title'][:56]}")
             typer.secho(f"        {row['branch']}  \u00b7  {len(runs)} run(s)", fg=ui.DIM)
+
+
+@app.command(name="reclaim")
+def reclaim_cmd(
+    ws_ref: str = typer.Option(None, "--workspace", "-w", help="Workspace id or name"),
+    all_workspaces: bool = typer.Option(False, "--all", help="Every workspace"),
+    dry_run: bool = typer.Option(False, "--dry-run", help="List worktrees without removing them"),
+) -> None:
+    """Free worktrees for features whose branches have landed."""
+    workspace_id = None if all_workspaces else _resolve_workspace(ws_ref).id
+    reclaimed = 0
+
+    with db.connect() as conn:
+        landed.reconcile(conn, force=True)
+        rows = db.list_features(conn) if all_workspaces else db.features_in(conn, workspace_id)
+        rows = [
+            row
+            for row in rows
+            if row["status"] == "landed" and Path(row["worktree_path"]).exists()
+        ]
+
+        for row in rows:
+            if dry_run:
+                typer.secho(
+                    f"  {row['id']}  would reclaim {row['worktree_path']}", fg=ui.DIM
+                )
+                reclaimed += 1
+                continue
+
+            results = landed.reclaim(conn, row)
+            kept = False
+            for name, result in results.items():
+                if result.removed:
+                    typer.secho(f"  {row['id']}  {name}: removed", fg=typer.colors.GREEN)
+                    continue
+                kept = True
+                typer.secho(
+                    f"  {row['id']}  {name}: kept — {result.reason}", fg=typer.colors.YELLOW
+                )
+                if result.recovery:
+                    typer.secho(f"        {result.recovery}", fg=ui.DIM)
+            if not kept:
+                reclaimed += 1
+
+    verb = "would be reclaimed" if dry_run else "reclaimed"
+    typer.echo(f"{reclaimed} feature(s) {verb}")
 
 
 @app.command()

@@ -99,6 +99,30 @@ def create(workspace: Workspace, feature_id: str, branch: str | None = None) -> 
     return FeatureTrees(root=root, trees=trees)
 
 
+def attach(workspace: Workspace, feature_id: str, branch: str | None = None) -> FeatureTrees:
+    """Describe a feature's trees without creating or changing anything on disk.
+
+    Landed detection only asks git about branches in each repository, not about the worktree, so
+    reclaimed worktrees do not need to be recreated merely to inspect their branches.
+    """
+    if not workspace.repos:
+        raise WorktreeError(f"workspace {workspace.name!r} has no repositories")
+
+    root = workspace.feature_root(feature_id)
+    branch = branch or branch_for(feature_id)
+    return FeatureTrees(
+        root=root,
+        trees=[
+            Tree(
+                repo=repo,
+                path=workspace.worktree_path(feature_id, repo),
+                branch=branch,
+            )
+            for repo in workspace.repos
+        ],
+    )
+
+
 def unintegrated(tree: Tree) -> list[str]:
     return git.commits_ahead(tree.repo.path, tree.base, tree.branch)
 
@@ -177,6 +201,15 @@ def teardown(trees: FeatureTrees, force: bool = False) -> dict[str, Teardown]:
     results: dict[str, Teardown] = {}
     for tree in trees.trees:
         results[tree.repo.name] = _teardown_one(tree, force)
+    all_gone = all(
+        result.removed or result.reason == "worktree already gone"
+        for result in results.values()
+    )
+    if all_gone:
+        try:
+            trees.root.rmdir()
+        except OSError:
+            pass
     return results
 
 

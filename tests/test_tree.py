@@ -92,6 +92,7 @@ def test_teardown_refuses_per_repo_independently(ws):
     assert not results["web"].removed
     assert "not in main" in results["web"].reason
     assert web.path.exists()
+    assert trees.root.exists()
 
 
 def test_teardown_refuses_uncommitted_work_per_repo(ws):
@@ -139,6 +140,45 @@ def test_create_is_idempotent_so_a_feature_can_be_pivoted(ws):
 
     again = tree.create(ws, "task-1")
     assert (again.by_name("api").path / "feature.py").exists()
+
+
+def test_attach_describes_absent_worktrees_without_creating_them(ws):
+    created = tree.create(ws, "task-1")
+    expected = [(t.repo.name, t.path, t.branch) for t in created]
+    tree.teardown(created)
+
+    attached = tree.attach(ws, "task-1")
+
+    assert [(t.repo.name, t.path, t.branch) for t in attached] == expected
+    assert not attached.root.exists()
+
+
+def test_landed_can_be_checked_after_worktrees_are_removed(ws):
+    trees = tree.create(ws, "task-1")
+    for name, filename in (("api", "feature.py"), ("web", "page.py")):
+        worktree = trees.by_name(name)
+        commit_in(worktree.path, filename)
+        git.git(worktree.repo.path, "merge", "--no-edit", "-q", worktree.branch)
+        git.git(worktree.repo.path, "worktree", "remove", str(worktree.path))
+    trees.root.rmdir()
+
+    attached = tree.attach(ws, "task-1")
+
+    assert tree.has_landed(attached)
+    assert not attached.root.exists(), "landed detection must not recreate reclaimed worktrees"
+
+
+def test_teardown_removes_the_empty_feature_root(ws):
+    trees = tree.create(ws, "task-1")
+    for name, filename in (("api", "feature.py"), ("web", "page.py")):
+        worktree = trees.by_name(name)
+        commit_in(worktree.path, filename)
+        git.git(worktree.repo.path, "merge", "--no-edit", "-q", worktree.branch)
+
+    results = tree.teardown(trees)
+
+    assert all(result.removed for result in results.values())
+    assert not trees.root.exists()
 
 
 def test_paths_never_escape_the_state_root(ws):
