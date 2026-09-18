@@ -6970,24 +6970,48 @@ const json = async (res) => {
   if (!res.ok) throw new Error(await res.text() || res.statusText);
   return res.json();
 };
+const get = async (url, attempts = 5) => {
+  for (let i = 0; i < attempts; i += 1) {
+    try {
+      return await fetch(url).then(json);
+    } catch (err) {
+      const refused = err instanceof TypeError || /fetch|network|refused/i.test(String(err.message));
+      if (!refused || i === attempts - 1) throw err;
+      await new Promise((r2) => setTimeout(r2, 400 * (i + 1)));
+    }
+  }
+  return void 0;
+};
 const post = (url, body) => fetch(url, {
   method: "POST",
   headers: { "Content-Type": "application/json" },
   body: JSON.stringify(body ?? {})
 }).then(json);
 const api = {
-  health: () => fetch("/api/health").then(json),
+  health: () => get("/api/health"),
   browseRepos: (path) => fetch(`/api/repos/browse${path ? `?path=${encodeURIComponent(path)}` : ""}`).then(json),
-  workspaces: () => fetch("/api/workspaces").then(json),
+  workspaces: () => get("/api/workspaces"),
+  harnesses: () => get("/api/harnesses"),
+  runs: (ws) => get(`/api/workspaces/${ws}/runs`),
+  agents: (ws) => get(`/api/workspaces/${ws}/agents`),
+  saveSettings: (id2, harness, models) => fetch(`/api/workspaces/${id2}/settings`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ harness, models })
+  }).then(json),
   createWorkspace: (name, repos = []) => post("/api/workspaces", { name, repos }),
   addRepo: (id2, path) => post(`/api/workspaces/${id2}/repos`, { path }),
   removeRepo: (id2, path) => fetch(`/api/workspaces/${id2}/repos?path=${encodeURIComponent(path)}`, {
     method: "DELETE"
   }).then(json),
-  features: (workspaceId) => fetch(workspaceId ? `/api/features?workspace_id=${workspaceId}` : "/api/features").then(json),
-  feature: (id2) => fetch(`/api/features/${id2}`).then(json),
-  diff: (id2) => fetch(`/api/features/${id2}/diff`).then(json),
-  evidence: (id2) => fetch(`/api/features/${id2}/evidence`).then(json),
+  features: (workspaceId) => get(workspaceId ? `/api/features?workspace_id=${workspaceId}` : "/api/features"),
+  feature: (id2) => get(`/api/features/${id2}`),
+  diff: (id2) => get(`/api/features/${id2}/diff`),
+  evidence: (id2) => get(`/api/features/${id2}/evidence`),
+  log: (id2) => get(`/api/features/${id2}/log`),
+  browser: (id2) => get(`/api/features/${id2}/browser`),
+  review: (id2) => get(`/api/features/${id2}/review`),
+  retry: (id2) => post(`/api/features/${id2}/retry`),
   create: (task, workspaceId) => post("/api/features", { task, workspace_id: workspaceId }),
   revise: (id2, feedback) => post(`/api/features/${id2}/revise`, { feedback }),
   approve: (id2) => post(`/api/features/${id2}/approve`),
@@ -7044,13 +7068,15 @@ function describe(event) {
       return null;
   }
 }
-const STAGES = ["plan", "execute", "review", "verify", "deliver"];
+const STAGES$1 = ["plan", "execute", "review", "verify", "deliver"];
 const AT = {
   planning: { at: 0, state: "running" },
   awaiting_approval: { at: 0, state: "gate" },
   approved: { at: 1, state: "running" },
   executing: { at: 1, state: "running" },
+  fixing: { at: 1, state: "running" },
   reviewing: { at: 2, state: "running" },
+  verifying: { at: 3, state: "running" },
   needs_human: { at: 2, state: "stopped" },
   verify_failed: { at: 3, state: "failed" },
   no_changes: { at: 1, state: "stopped" },
@@ -7066,7 +7092,9 @@ const LABEL = {
   awaiting_approval: ["gate", "needs your approval"],
   approved: ["running", "starting"],
   executing: ["running", "implementing"],
+  fixing: ["running", "fixing review issues"],
   reviewing: ["running", "in review"],
+  verifying: ["running", "running your checks"],
   needs_human: ["attn", "needs you"],
   verify_failed: ["bad", "checks failed"],
   no_changes: ["attn", "no changes"],
@@ -7083,9 +7111,22 @@ const STAGE_COLOR = {
   verify: "var(--st-verify)",
   deliver: "var(--st-deliver)"
 };
-function Pill({ status, busy }) {
-  const effective = busy && !["awaiting_approval"].includes(status) ? "executing" : status;
-  const [tone, text] = label(effective);
+const NEEDS_YOU = {
+  awaiting_approval: { verb: "Approve the plan", why: "A plan is ready for your decision." },
+  needs_human: {
+    verb: "Settle the disagreement",
+    why: "The reviewer still blocked the change after two fix rounds. That usually means the request was ambiguous."
+  },
+  verify_failed: {
+    verb: "Decide what to do",
+    why: "Your own project checks failed on the branch. The code was reviewed, but it does not pass."
+  },
+  failed: { verb: "Decide what to do", why: "The run errored before it finished." },
+  no_changes: { verb: "Decide what to do", why: "The agent made no changes. The request may already be satisfied, or it was too vague to act on." }
+};
+const needsYou = (feature) => !feature.busy && Boolean(NEEDS_YOU[feature.status]);
+function Pill({ status }) {
+  const [tone, text] = label(status);
   return /* @__PURE__ */ jsxRuntimeExports.jsxs("span", { className: `pill ${tone}`, children: [
     /* @__PURE__ */ jsxRuntimeExports.jsx("i", {}),
     text
@@ -7093,7 +7134,7 @@ function Pill({ status, busy }) {
 }
 function Rail({ status, large = false }) {
   const { at, state } = progress(status);
-  return /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: `rail ${large ? "lg" : ""}`, children: STAGES.map((stage, i) => {
+  return /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: `rail ${large ? "lg" : ""}`, children: STAGES$1.map((stage, i) => {
     let cls = "";
     if (i < at) cls = "done";
     else if (i === at) cls = state === "failed" ? "fail" : state === "running" ? "now" : "";
@@ -7114,14 +7155,46 @@ function Rail({ status, large = false }) {
 }
 function StageLegend({ status }) {
   const { at, state } = progress(status);
-  return /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "stagerow", children: STAGES.map((stage, i) => /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: `s ${i < at ? "done" : i === at && state !== "stopped" ? "now" : ""}`, children: stage }, stage)) });
+  return /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "stagerow", children: STAGES$1.map((stage, i) => /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: `s ${i < at ? "done" : i === at && state !== "stopped" ? "now" : ""}`, children: stage }, stage)) });
+}
+const BLOCK_CHARS = 260;
+function Prose({ text, limit = BLOCK_CHARS }) {
+  const paragraphs = String(text ?? "").trim().split(/\n\s*\n/).filter(Boolean);
+  const blocks = paragraphs.flatMap((para) => {
+    const clean = para.replace(/\s+/g, " ").trim();
+    const sentences = clean.match(/[^.!?]+[.!?]+(\s|$)|[^.!?]+$/g);
+    if (!sentences || sentences.length < 2) return [clean];
+    const out = [];
+    let current = "";
+    for (const sentence of sentences) {
+      if (current && (current + sentence).length > limit) {
+        out.push(current.trim());
+        current = sentence;
+      } else {
+        current += sentence;
+      }
+    }
+    if (current.trim()) out.push(current.trim());
+    return out;
+  });
+  return /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "prose", children: blocks.map((b, i) => /* @__PURE__ */ jsxRuntimeExports.jsx("p", { children: b }, i)) });
+}
+function Risk({ text }) {
+  const match = String(text).match(/^([A-Z][A-Z \-]{3,40}?)\s*[:—-]\s*(.+)$/s);
+  return /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "risk", children: [
+    /* @__PURE__ */ jsxRuntimeExports.jsx("span", {}),
+    /* @__PURE__ */ jsxRuntimeExports.jsxs("span", { children: [
+      match && /* @__PURE__ */ jsxRuntimeExports.jsx("b", { className: "risk-tag", children: match[1].trim() }),
+      match ? match[2].trim() : text
+    ] })
+  ] });
 }
 function Plan({ plan }) {
   if (!plan) return /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "card", children: /* @__PURE__ */ jsxRuntimeExports.jsx("p", { className: "mono", style: { color: "var(--text-3)" }, children: "no plan yet" }) });
   return /* @__PURE__ */ jsxRuntimeExports.jsxs(jsxRuntimeExports.Fragment, { children: [
     /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "card", children: [
       /* @__PURE__ */ jsxRuntimeExports.jsx("h3", { className: "eyebrow", children: "Approach" }),
-      /* @__PURE__ */ jsxRuntimeExports.jsx("p", { children: plan.summary })
+      /* @__PURE__ */ jsxRuntimeExports.jsx(Prose, { text: plan.summary })
     ] }),
     plan.steps?.length > 0 && /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "card", children: [
       /* @__PURE__ */ jsxRuntimeExports.jsx("h3", { className: "eyebrow", children: "Steps" }),
@@ -7139,10 +7212,7 @@ function Plan({ plan }) {
     ] }),
     plan.risks?.length > 0 && /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "card", children: [
       /* @__PURE__ */ jsxRuntimeExports.jsx("h3", { className: "eyebrow", children: "Risks & assumptions" }),
-      plan.risks.map((r2, i) => /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "risk", children: [
-        /* @__PURE__ */ jsxRuntimeExports.jsx("span", {}),
-        /* @__PURE__ */ jsxRuntimeExports.jsx("span", { children: r2 })
-      ] }, i))
+      plan.risks.map((r2, i) => /* @__PURE__ */ jsxRuntimeExports.jsx(Risk, { text: r2 }, i))
     ] })
   ] });
 }
@@ -7181,7 +7251,7 @@ function Gate({ busy, onApprove, onDecline, onRevise }) {
     ] })
   ] });
 }
-function Log({ lines, connected }) {
+function Log({ lines, replay, connected }) {
   const ref = reactExports.useRef(null);
   const pinned = reactExports.useRef(true);
   const onScroll = () => {
@@ -7193,10 +7263,18 @@ function Log({ lines, connected }) {
     if (pinned.current && ref.current) ref.current.scrollTop = ref.current.scrollHeight;
   }, [lines]);
   return /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "card", children: [
-    /* @__PURE__ */ jsxRuntimeExports.jsx("h3", { className: "eyebrow", children: connected ? "Live" : "Reconnecting…" }),
+    /* @__PURE__ */ jsxRuntimeExports.jsx("h3", { className: "eyebrow", children: lines.length > 0 ? connected ? "Live" : "Reconnecting…" : "Recorded" }),
     /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "log", ref, onScroll, children: [
-      lines.length === 0 && /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "dim", children: "nothing running" }),
-      lines.map((line, i) => /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: line.tone, children: line.text }, i))
+      lines.map((line, i) => /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: line.tone, children: line.text }, i)),
+      lines.length === 0 && replay?.stages?.map((s) => /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { children: [
+        /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "stage", children: [
+          s.stage,
+          " · ",
+          s.harness
+        ] }),
+        s.lines.map((line, i) => /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: line.tone, children: line.text }, i))
+      ] }, s.stage)),
+      lines.length === 0 && !replay?.stages?.length && /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "dim", children: "nothing recorded for this run" })
     ] })
   ] });
 }
@@ -7217,7 +7295,187 @@ function Diff({ text, repos }) {
     }) })
   ] });
 }
-const bridge = typeof window !== "undefined" ? window.vorfluxDesktop : void 0;
+function BrowserChecks({ featureId, data }) {
+  if (!data?.checks?.length) {
+    return /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "card", children: /* @__PURE__ */ jsxRuntimeExports.jsxs("p", { style: { color: "var(--text-3)" }, children: [
+      "No browser checks recorded. Add a ",
+      /* @__PURE__ */ jsxRuntimeExports.jsx("code", { children: "[browser]" }),
+      " section to",
+      /* @__PURE__ */ jsxRuntimeExports.jsx("code", { children: " .drove.toml" }),
+      " to have Drove open the app after each run."
+    ] }) });
+  }
+  return /* @__PURE__ */ jsxRuntimeExports.jsx(jsxRuntimeExports.Fragment, { children: data.checks.map((check) => {
+    const problems = [
+      ...check.console_errors.map((e) => ["console", e]),
+      ...check.failed_requests.map((r2) => ["request", r2]),
+      ...check.error ? [["load", check.error]] : []
+    ];
+    return /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: `card shot ${problems.length ? "bad" : ""}`, children: [
+      /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "shot-head", children: [
+        /* @__PURE__ */ jsxRuntimeExports.jsx("b", { className: "mono", children: check.path }),
+        /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "dim", children: check.title }),
+        /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "grow" }),
+        /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: problems.length ? "flag" : "okmark", children: problems.length ? `${problems.length} problem${problems.length === 1 ? "" : "s"}` : "clean" })
+      ] }),
+      problems.length > 0 && /* @__PURE__ */ jsxRuntimeExports.jsx("ul", { className: "problems", children: problems.map(([kind, text], i) => /* @__PURE__ */ jsxRuntimeExports.jsxs("li", { children: [
+        /* @__PURE__ */ jsxRuntimeExports.jsx("em", { children: kind }),
+        " ",
+        text
+      ] }, i)) }),
+      check.screenshot && /* @__PURE__ */ jsxRuntimeExports.jsx(
+        "img",
+        {
+          className: "screenshot",
+          alt: `${check.path} rendered`,
+          loading: "lazy",
+          src: `/api/features/${featureId}/screens/${check.screenshot}`
+        }
+      )
+    ] }, check.path);
+  }) });
+}
+function Review({ data }) {
+  const rounds = data?.reviews ?? [];
+  if (!rounds.length) {
+    return /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "card", children: /* @__PURE__ */ jsxRuntimeExports.jsx("p", { style: { color: "var(--text-3)" }, children: "Not reviewed yet. Review runs after the change is committed." }) });
+  }
+  const who = (stage) => {
+    const s = data.stages?.[stage];
+    if (!s) return null;
+    const detail = [s.lab, s.model].filter(Boolean).join(" · ");
+    return { harness: s.harness, detail };
+  };
+  const builder = who("execute");
+  const reviewer = who("review");
+  return /* @__PURE__ */ jsxRuntimeExports.jsxs(jsxRuntimeExports.Fragment, { children: [
+    /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: `card indep ${data.independent ? "" : "weak"}`, children: data.independent ? /* @__PURE__ */ jsxRuntimeExports.jsxs(jsxRuntimeExports.Fragment, { children: [
+      /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "vs", children: [
+        /* @__PURE__ */ jsxRuntimeExports.jsxs("span", { className: "side", children: [
+          /* @__PURE__ */ jsxRuntimeExports.jsx("b", { children: builder?.harness }),
+          /* @__PURE__ */ jsxRuntimeExports.jsx("em", { children: builder?.detail }),
+          /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "role", children: "wrote it" })
+        ] }),
+        /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "arrow", children: "judged by" }),
+        /* @__PURE__ */ jsxRuntimeExports.jsxs("span", { className: "side", children: [
+          /* @__PURE__ */ jsxRuntimeExports.jsx("b", { children: reviewer?.harness }),
+          /* @__PURE__ */ jsxRuntimeExports.jsx("em", { children: reviewer?.detail }),
+          /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "role", children: "reviewed it" })
+        ] })
+      ] }),
+      /* @__PURE__ */ jsxRuntimeExports.jsx("p", { className: "fine", children: "A different tool from a different lab, given only the approved intent and the diff — never the implementer's reasoning — in a fresh session each round." })
+    ] }) : /* @__PURE__ */ jsxRuntimeExports.jsxs("p", { className: "fine warnish", children: [
+      /* @__PURE__ */ jsxRuntimeExports.jsx("b", { children: builder?.harness }),
+      " both wrote and reviewed this change. A model that has just argued for an approach tends to accept it, so this verdict is weaker than an independent one. Set a different harness for Review in Stages."
+    ] }) }),
+    rounds.map((round, i) => /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: `card round ${round.verdict}`, children: [
+      /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "round-head", children: [
+        /* @__PURE__ */ jsxRuntimeExports.jsxs("span", { className: "n", children: [
+          "Round ",
+          i + 1
+        ] }),
+        /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: `verdict ${round.verdict}`, children: round.verdict === "pass" ? "passed" : "changes requested" })
+      ] }),
+      round.summary && /* @__PURE__ */ jsxRuntimeExports.jsx("p", { className: "sum", children: round.summary }),
+      round.blocking?.length > 0 && /* @__PURE__ */ jsxRuntimeExports.jsx("ul", { className: "blocking", children: round.blocking.map((issue, j) => /* @__PURE__ */ jsxRuntimeExports.jsxs("li", { children: [
+        /* @__PURE__ */ jsxRuntimeExports.jsxs("code", { children: [
+          issue.file,
+          issue.line ? `:${issue.line}` : ""
+        ] }),
+        /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: `sev ${issue.severity}`, children: issue.severity }),
+        /* @__PURE__ */ jsxRuntimeExports.jsx("span", { children: issue.why })
+      ] }, j)) })
+    ] }, i)),
+    rounds.length > 1 && rounds[rounds.length - 1].verdict === "pass" && /* @__PURE__ */ jsxRuntimeExports.jsxs("p", { className: "fine", style: { color: "var(--text-3)" }, children: [
+      "The issues raised in round ",
+      rounds.length - 1,
+      " were addressed, and a fresh reviewer — with no memory of having raised them — passed the result."
+    ] })
+  ] });
+}
+function Evidence({ pack, markdown, onCopy }) {
+  if (!pack || !Object.keys(pack).length) {
+    return /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "card", children: /* @__PURE__ */ jsxRuntimeExports.jsx("p", { style: { color: "var(--text-3)" }, children: "No evidence pack yet — one is written when a run finishes." }) });
+  }
+  const verify = pack.verify ?? [];
+  const failed = verify.filter((c) => c.exit_code !== 0);
+  return /* @__PURE__ */ jsxRuntimeExports.jsxs(jsxRuntimeExports.Fragment, { children: [
+    /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "card", children: [
+      /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "ev-head", children: [
+        /* @__PURE__ */ jsxRuntimeExports.jsx("h3", { className: "eyebrow", children: "Evidence" }),
+        /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "grow" }),
+        markdown && /* @__PURE__ */ jsxRuntimeExports.jsx("button", { className: "ghost tiny", onClick: () => onCopy?.(markdown), children: "Copy as markdown" })
+      ] }),
+      /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "factrow", children: [
+        /* @__PURE__ */ jsxRuntimeExports.jsx(Fact, { k: "Branch", v: pack.branch, mono: true }),
+        /* @__PURE__ */ jsxRuntimeExports.jsx(Fact, { k: "Into", v: pack.base, mono: true }),
+        /* @__PURE__ */ jsxRuntimeExports.jsx(Fact, { k: "Commit", v: (pack.head_sha ?? "—").slice(0, 12), mono: true }),
+        /* @__PURE__ */ jsxRuntimeExports.jsx(
+          Fact,
+          {
+            k: "Reviewed by",
+            v: pack.independent_review ? pack.stages?.review?.harness ?? "yes" : "same harness",
+            warn: !pack.independent_review
+          }
+        ),
+        /* @__PURE__ */ jsxRuntimeExports.jsx(
+          Fact,
+          {
+            k: "Checks",
+            v: verify.length ? failed.length ? `${failed.length} failed` : "all passed" : "none set",
+            warn: Boolean(failed.length) || !verify.length
+          }
+        ),
+        /* @__PURE__ */ jsxRuntimeExports.jsx(
+          Fact,
+          {
+            k: "Cost",
+            v: pack.cost_usd != null ? `$${pack.cost_usd.toFixed(4)}` : "—"
+          }
+        )
+      ] })
+    ] }),
+    pack.diff_stat && /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "card", children: [
+      /* @__PURE__ */ jsxRuntimeExports.jsx("h3", { className: "eyebrow", children: "Files changed" }),
+      /* @__PURE__ */ jsxRuntimeExports.jsx("pre", { className: "statblock", children: pack.diff_stat.trim() })
+    ] }),
+    verify.length > 0 && /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "card", children: [
+      /* @__PURE__ */ jsxRuntimeExports.jsx("h3", { className: "eyebrow", children: "Checks" }),
+      verify.map((check, i) => /* @__PURE__ */ jsxRuntimeExports.jsxs("details", { className: "check-item", open: check.exit_code !== 0, children: [
+        /* @__PURE__ */ jsxRuntimeExports.jsxs("summary", { children: [
+          /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: check.exit_code === 0 ? "ok" : "bad", children: check.exit_code === 0 ? "passed" : `failed (${check.exit_code})` }),
+          /* @__PURE__ */ jsxRuntimeExports.jsx("b", { children: check.repo ? `${check.repo}/${check.name}` : check.name }),
+          /* @__PURE__ */ jsxRuntimeExports.jsx("code", { children: check.command }),
+          /* @__PURE__ */ jsxRuntimeExports.jsxs("span", { className: "dur", children: [
+            check.duration_s,
+            "s"
+          ] })
+        ] }),
+        /* @__PURE__ */ jsxRuntimeExports.jsx("pre", { className: "statblock", children: (check.output || "(no output)").trim() })
+      ] }, i))
+    ] }),
+    pack.files_changed?.length > 0 && !pack.diff_stat && /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "card", children: [
+      /* @__PURE__ */ jsxRuntimeExports.jsx("h3", { className: "eyebrow", children: "Files changed" }),
+      /* @__PURE__ */ jsxRuntimeExports.jsx("ul", { children: pack.files_changed.map((f2) => /* @__PURE__ */ jsxRuntimeExports.jsx("li", { children: /* @__PURE__ */ jsxRuntimeExports.jsx("code", { children: f2 }) }, f2)) })
+    ] }),
+    Object.keys(pack.sessions ?? {}).length > 0 && /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "card", children: [
+      /* @__PURE__ */ jsxRuntimeExports.jsx("h3", { className: "eyebrow", children: "Reopen any of this" }),
+      /* @__PURE__ */ jsxRuntimeExports.jsx("p", { style: { fontSize: 12.5, color: "var(--text-3)", margin: "0 0 10px" }, children: "Each is a real conversation you can continue from its worktree." }),
+      Object.entries(pack.sessions).map(([stage, id2]) => /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "sessrow", children: [
+        /* @__PURE__ */ jsxRuntimeExports.jsx("b", { children: stage }),
+        /* @__PURE__ */ jsxRuntimeExports.jsx("code", { children: id2 })
+      ] }, stage))
+    ] })
+  ] });
+}
+function Fact({ k: k2, v: v2, mono, warn }) {
+  const shown = v2 === void 0 || v2 === null || v2 === "" ? "—" : v2;
+  return /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "fact", children: [
+    /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "k", children: k2 }),
+    /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: `v ${mono ? "mono" : ""} ${warn ? "warn" : ""}`, children: shown })
+  ] });
+}
+const bridge = typeof window !== "undefined" ? window.droveDesktop : void 0;
 const isDesktop = Boolean(bridge);
 async function chooseRepository() {
   if (!bridge?.chooseRepository) return null;
@@ -7231,157 +7489,521 @@ function notify(title, body) {
 function setPulse(state) {
   bridge?.updatePulse?.(state);
 }
-function WorkspaceBar({ workspaces, current, onSelect, onCreate, onAddRepo, onRemoveRepo }) {
-  const [mode, setMode] = reactExports.useState(null);
-  const [value, setValue] = reactExports.useState("");
-  const submit = () => {
-    const text = value.trim();
+function WorkspaceSheet({ workspaces, current, onClose, onSelect, onCreate, onAddRepo, onRemoveRepo }) {
+  const [creating, setCreating] = reactExports.useState(false);
+  const [name, setName] = reactExports.useState("");
+  const [path, setPath] = reactExports.useState("");
+  const [typing, setTyping] = reactExports.useState(false);
+  const addRepo = async () => {
+    if (isDesktop && !typing) {
+      const picked = await chooseRepository();
+      if (picked) onAddRepo(picked);
+      return;
+    }
+    const text = path.trim();
     if (!text) return;
-    setValue("");
-    const was = mode;
-    setMode(null);
-    if (was === "workspace") onCreate(text);
-    else onAddRepo(text);
+    setPath("");
+    setTyping(false);
+    onAddRepo(text);
   };
-  return /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "wsbar", children: [
-    /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "wsrow", children: [
-      /* @__PURE__ */ jsxRuntimeExports.jsxs("select", { value: current?.id ?? "", onChange: (e) => onSelect(e.target.value), "aria-label": "Workspace", children: [
-        workspaces.length === 0 && /* @__PURE__ */ jsxRuntimeExports.jsx("option", { value: "", children: "no workspaces" }),
-        workspaces.map((w2) => /* @__PURE__ */ jsxRuntimeExports.jsx("option", { value: w2.id, children: w2.name }, w2.id))
-      ] }),
-      /* @__PURE__ */ jsxRuntimeExports.jsx(
+  return /* @__PURE__ */ jsxRuntimeExports.jsxs(jsxRuntimeExports.Fragment, { children: [
+    /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "sheet-scrim", onClick: onClose }),
+    /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "sheet", children: [
+      /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "eyebrow", children: "Workspaces" }),
+      workspaces.map((w2) => /* @__PURE__ */ jsxRuntimeExports.jsxs(
         "button",
         {
-          className: "ghost",
+          className: `ws-item ${w2.id === current?.id ? "on" : ""}`,
           onClick: () => {
-            setMode(mode === "workspace" ? null : "workspace");
-            setValue("");
+            onSelect(w2.id);
+            onClose();
           },
-          title: "New workspace",
-          children: "+"
-        }
-      )
-    ] }),
-    current && /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "repochips", children: [
-      current.repos.map((repo) => /* @__PURE__ */ jsxRuntimeExports.jsxs("span", { className: `chip ${repo.exists ? "" : "missing"}`, title: repo.path, children: [
-        repo.name,
-        /* @__PURE__ */ jsxRuntimeExports.jsx("em", { style: { color: "var(--text-3)", fontStyle: "normal" }, children: repo.base_branch }),
-        /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "x", onClick: () => onRemoveRepo(repo.path), title: "Remove", children: "×" })
-      ] }, repo.path)),
-      /* @__PURE__ */ jsxRuntimeExports.jsx(
-        "span",
-        {
-          className: "chip add",
-          onClick: async () => {
-            if (isDesktop) {
-              const picked = await chooseRepository();
-              if (picked) onAddRepo(picked);
-              return;
+          children: [
+            /* @__PURE__ */ jsxRuntimeExports.jsx("span", { children: w2.name }),
+            /* @__PURE__ */ jsxRuntimeExports.jsxs("small", { children: [
+              w2.repos.length,
+              " repo",
+              w2.repos.length === 1 ? "" : "s",
+              " · ",
+              w2.features,
+              " feature",
+              w2.features === 1 ? "" : "s"
+            ] })
+          ]
+        },
+        w2.id
+      )),
+      creating ? /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "wsrow", children: [
+        /* @__PURE__ */ jsxRuntimeExports.jsx(
+          "input",
+          {
+            autoFocus: true,
+            placeholder: "Workspace name",
+            value: name,
+            onChange: (e) => setName(e.target.value),
+            onKeyDown: (e) => {
+              if (e.key === "Enter" && name.trim()) {
+                onCreate(name.trim());
+                setName("");
+                setCreating(false);
+              }
+              if (e.key === "Escape") setCreating(false);
             }
-            setMode(mode === "repo" ? null : "repo");
-            setValue("");
-          },
-          children: "+ repo"
-        }
-      )
-    ] }),
-    mode && /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "wsrow", children: [
-      /* @__PURE__ */ jsxRuntimeExports.jsx(
-        "input",
-        {
-          autoFocus: true,
-          placeholder: mode === "workspace" ? "Workspace name" : "/path/to/repo",
-          value,
-          onChange: (e) => setValue(e.target.value),
-          onKeyDown: (e) => {
-            if (e.key === "Enter") submit();
-            if (e.key === "Escape") setMode(null);
           }
-        }
-      ),
-      /* @__PURE__ */ jsxRuntimeExports.jsx("button", { className: "primary", onClick: submit, disabled: !value.trim(), children: "Add" })
-    ] }),
-    current?.repos.length > 1 && /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "note", children: "A feature here may change several repos in one run." })
-  ] });
-}
-function Overview({ workspace, features, onPick }) {
-  const by = (s) => features.filter((f2) => f2.status === s).length;
-  const waiting = features.filter((f2) => f2.status === "awaiting_approval");
-  const running = features.filter((f2) => f2.busy || ["executing", "planning"].includes(f2.status));
-  return /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "main-inner", children: [
-    /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "dhead", children: /* @__PURE__ */ jsxRuntimeExports.jsx("h2", { children: workspace.name }) }),
-    /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "dmeta", children: [
-      /* @__PURE__ */ jsxRuntimeExports.jsxs("span", { children: [
-        workspace.repos.length,
-        " repositor",
-        workspace.repos.length === 1 ? "y" : "ies"
-      ] }),
-      /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "sep", children: "·" }),
-      /* @__PURE__ */ jsxRuntimeExports.jsxs("span", { children: [
-        features.length,
-        " feature",
-        features.length === 1 ? "" : "s"
-      ] })
-    ] }),
-    /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "stats", children: [
-      /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "stat", children: [
-        /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "k", children: "Awaiting you" }),
-        /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "v", children: by("awaiting_approval") + by("needs_human") })
-      ] }),
-      /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "stat", children: [
-        /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "k", children: "Running" }),
-        /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "v", children: running.length })
-      ] }),
-      /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "stat", children: [
-        /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "k", children: "Ready to merge" }),
-        /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "v", children: by("delivered") })
-      ] }),
-      /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "stat", children: [
-        /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "k", children: "Landed" }),
-        /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "v", children: by("landed") })
-      ] })
-    ] }),
-    waiting.length > 0 && /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "card", children: [
-      /* @__PURE__ */ jsxRuntimeExports.jsx("h3", { className: "eyebrow", children: "Waiting on your approval" }),
-      waiting.map((f2) => /* @__PURE__ */ jsxRuntimeExports.jsxs("button", { className: "picker", onClick: () => onPick(f2.id), children: [
-        /* @__PURE__ */ jsxRuntimeExports.jsx("span", { style: { flex: 1 }, children: f2.title }),
-        /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "go", children: "→" })
-      ] }, f2.id))
-    ] }),
-    /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "card", children: [
-      /* @__PURE__ */ jsxRuntimeExports.jsx("h3", { className: "eyebrow", children: "How a run works" }),
-      /* @__PURE__ */ jsxRuntimeExports.jsxs("p", { style: { color: "var(--text-2)", fontSize: 13 }, children: [
-        "You describe a feature. ",
-        /* @__PURE__ */ jsxRuntimeExports.jsx("b", { style: { color: "var(--text)" }, children: workspace.harness.plan }),
-        " reads the code and writes a plan for you to approve, edit or reject.",
-        " ",
-        /* @__PURE__ */ jsxRuntimeExports.jsx("b", { style: { color: "var(--text)" }, children: workspace.harness.execute }),
-        " implements it on an isolated branch in every repo, then",
-        " ",
-        /* @__PURE__ */ jsxRuntimeExports.jsx("b", { style: { color: "var(--text)" }, children: workspace.harness.review }),
-        " — a different model — reviews the diff without seeing how it was written. Your own tests run last. You get a branch and an evidence pack; your working copy is never touched."
+        ),
+        /* @__PURE__ */ jsxRuntimeExports.jsx("button", { className: "primary", disabled: !name.trim(), onClick: () => {
+          onCreate(name.trim());
+          setName("");
+          setCreating(false);
+        }, children: "Add" })
+      ] }) : /* @__PURE__ */ jsxRuntimeExports.jsx("button", { className: "ghost", onClick: () => setCreating(true), children: "+ New workspace" }),
+      current && /* @__PURE__ */ jsxRuntimeExports.jsxs(jsxRuntimeExports.Fragment, { children: [
+        /* @__PURE__ */ jsxRuntimeExports.jsxs("span", { className: "eyebrow", style: { marginTop: 4 }, children: [
+          "Repositories in ",
+          current.name
+        ] }),
+        /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "repochips", children: current.repos.map((repo) => /* @__PURE__ */ jsxRuntimeExports.jsxs("span", { className: `chip ${repo.exists ? "" : "missing"}`, title: repo.path, children: [
+          repo.name,
+          /* @__PURE__ */ jsxRuntimeExports.jsx("em", { style: { color: "var(--text-3)", fontStyle: "normal" }, children: repo.base_branch }),
+          /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "x", onClick: () => onRemoveRepo(repo.path), title: "Remove", children: "×" })
+        ] }, repo.path)) }),
+        isDesktop && !typing ? /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "wsrow", children: [
+          /* @__PURE__ */ jsxRuntimeExports.jsx("button", { onClick: addRepo, children: "Choose folder…" }),
+          /* @__PURE__ */ jsxRuntimeExports.jsx("button", { className: "ghost", onClick: () => setTyping(true), children: "Type a path" })
+        ] }) : typing ? /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "wsrow", children: [
+          /* @__PURE__ */ jsxRuntimeExports.jsx(
+            "input",
+            {
+              autoFocus: true,
+              placeholder: "/path/to/repo",
+              value: path,
+              onChange: (e) => setPath(e.target.value),
+              onKeyDown: (e) => {
+                if (e.key === "Enter") addRepo();
+              }
+            }
+          ),
+          /* @__PURE__ */ jsxRuntimeExports.jsx("button", { onClick: addRepo, disabled: !path.trim(), children: "Add" }),
+          /* @__PURE__ */ jsxRuntimeExports.jsx("button", { className: "ghost tiny", onClick: () => setTyping(false), children: "browse" })
+        ] }) : /* @__PURE__ */ jsxRuntimeExports.jsx(
+          FolderBrowser,
+          {
+            onPick: (p2) => onAddRepo(p2),
+            onType: () => setTyping(true)
+          }
+        ),
+        current.repos.length > 1 && /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "note", children: "A feature here may change several repos in one run; their branches must be merged together." })
       ] })
     ] })
   ] });
 }
+function shorten(path, keep = 3) {
+  const parts = String(path).split("/").filter(Boolean);
+  return (parts.length > keep ? "…/" : "/") + parts.slice(-keep).join("/");
+}
+function FolderBrowser({ onPick, onType }) {
+  const [at, setAt] = reactExports.useState(null);
+  const [data, setData] = reactExports.useState(null);
+  const [error, setError] = reactExports.useState("");
+  const [nonce, setNonce] = reactExports.useState(0);
+  reactExports.useEffect(() => {
+    setError("");
+    api.browseRepos(at).then(setData).catch((e) => setError(String(e.message ?? e)));
+  }, [at, nonce]);
+  if (error) {
+    return /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "browser-error", children: [
+      /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "note bad", children: error }),
+      /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "wsrow", children: [
+        /* @__PURE__ */ jsxRuntimeExports.jsx("button", { className: "tiny", onClick: () => {
+          setError("");
+          setAt(at);
+        }, children: "Retry" }),
+        /* @__PURE__ */ jsxRuntimeExports.jsx("button", { className: "ghost tiny", onClick: onType, children: "Type a path instead" })
+      ] })
+    ] });
+  }
+  if (!data) return /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "note", children: "loading…" });
+  return /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "browser", children: [
+    /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "crumbs", children: [
+      /* @__PURE__ */ jsxRuntimeExports.jsx("button", { className: "ghost tiny", disabled: !data.parent, onClick: () => setAt(data.parent), children: "↑ up" }),
+      /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "mono path", title: data.path, children: shorten(data.path) }),
+      /* @__PURE__ */ jsxRuntimeExports.jsx("button", { className: "ghost tiny", onClick: onType, children: "type" })
+    ] }),
+    /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "entries", children: [
+      data.entries.length === 0 && /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "note", children: "no folders here" }),
+      data.entries.map((entry) => /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "entry", children: [
+        /* @__PURE__ */ jsxRuntimeExports.jsxs("button", { className: "name", onClick: () => setAt(entry.path), children: [
+          entry.is_repo ? "◆" : "▸",
+          " ",
+          entry.name
+        ] }),
+        entry.is_repo && /* @__PURE__ */ jsxRuntimeExports.jsx("button", { className: "tiny primary", onClick: () => onPick(entry.path), children: "add" })
+      ] }, entry.path))
+    ] })
+  ] });
+}
+const STAGES = [
+  ["plan", "Plan", "Reads your code and writes the plan you approve."],
+  ["execute", "Execute", "Writes the code on an isolated branch."],
+  ["review", "Review", "Judges the diff. Must not be the harness that wrote it."],
+  ["arbiter", "Arbiter", "Breaks a deadlock when review and execute disagree twice."]
+];
+function SettingsSheet({ workspace, harnesses: warmed, onClose, onSave }) {
+  const [harnesses, setHarnesses] = reactExports.useState(warmed ?? []);
+  const [harness, setHarness] = reactExports.useState(workspace.harness);
+  const [models, setModels] = reactExports.useState(workspace.models ?? {});
+  const [saving, setSaving] = reactExports.useState(false);
+  reactExports.useEffect(() => {
+    if (warmed?.length) {
+      setHarnesses(warmed);
+      return;
+    }
+    api_harnesses().then(setHarnesses).catch(() => setHarnesses([]));
+  }, [warmed]);
+  const usable = harnesses.filter((h) => h.installed);
+  const modelsFor = (name) => harnesses.find((h) => h.name === name)?.models ?? [];
+  const noteFor = (name, id2) => modelsFor(name).find((m2) => m2.id === id2)?.note ?? "";
+  const missing = harnesses.filter((h) => !h.installed);
+  const independent = harness.review !== harness.execute;
+  const loading = harnesses.length === 0;
+  const save = async () => {
+    setSaving(true);
+    await onSave(harness, models);
+    setSaving(false);
+    onClose();
+  };
+  return /* @__PURE__ */ jsxRuntimeExports.jsxs(jsxRuntimeExports.Fragment, { children: [
+    /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "sheet-scrim", onClick: onClose }),
+    /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "sheet settings", children: [
+      /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "srow-head", children: [
+        /* @__PURE__ */ jsxRuntimeExports.jsxs("span", { className: "eyebrow", children: [
+          "Stages · ",
+          workspace.name
+        ] }),
+        /* @__PURE__ */ jsxRuntimeExports.jsx("button", { className: "ghost tiny", onClick: onClose, children: "esc" })
+      ] }),
+      loading && STAGES.map(([key, label2, why]) => /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "stagecfg", children: [
+        /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "lbl", children: [
+          /* @__PURE__ */ jsxRuntimeExports.jsx("b", { children: label2 }),
+          /* @__PURE__ */ jsxRuntimeExports.jsx("span", { children: why })
+        ] }),
+        /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "picks", children: [
+          /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "skel" }),
+          /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "skel" })
+        ] })
+      ] }, `skel-${key}`)),
+      !loading && STAGES.map(([key, label2, why]) => /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "stagecfg", children: [
+        /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "lbl", children: [
+          /* @__PURE__ */ jsxRuntimeExports.jsx("b", { children: label2 }),
+          /* @__PURE__ */ jsxRuntimeExports.jsx("span", { children: why })
+        ] }),
+        /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "picks", children: [
+          /* @__PURE__ */ jsxRuntimeExports.jsx(
+            "select",
+            {
+              value: harness[key] ?? "",
+              onChange: (e) => {
+                const next = e.target.value;
+                setHarness({ ...harness, [key]: next });
+                setModels({ ...models, [key]: "" });
+              },
+              children: usable.map((h) => /* @__PURE__ */ jsxRuntimeExports.jsx("option", { value: h.name, children: h.name }, h.name))
+            }
+          ),
+          /* @__PURE__ */ jsxRuntimeExports.jsx(
+            ModelPicker,
+            {
+              value: models[key] ?? "",
+              options: modelsFor(harness[key]),
+              onChange: (v2) => setModels({ ...models, [key]: v2 })
+            }
+          ),
+          noteFor(harness[key], models[key]) && /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "mnote", children: noteFor(harness[key], models[key]) })
+        ] })
+      ] }, key)),
+      missing.length > 0 && /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "note", children: [
+        "Not installed: ",
+        missing.map((h) => h.name).join(", "),
+        " — these cannot be chosen until the CLI is on this machine."
+      ] }),
+      !independent && /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "note bad", children: [
+        harness.execute,
+        " would review its own work. A model that just argued for a shortcut tends to accept it — that is not an independent review."
+      ] }),
+      /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "srow-foot", children: [
+        /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "hint", children: loading ? "Reading what each CLI offers…" : "Leave a model unset to use whatever that CLI defaults to." }),
+        /* @__PURE__ */ jsxRuntimeExports.jsx("button", { className: "primary", onClick: save, disabled: saving || loading, children: saving ? "Saving…" : "Save" })
+      ] })
+    ] })
+  ] });
+}
+function ModelPicker({ value, options, onChange }) {
+  const [free, setFree] = reactExports.useState(false);
+  if (options.length === 0 || free) {
+    return /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "freemodel", children: [
+      /* @__PURE__ */ jsxRuntimeExports.jsx(
+        "input",
+        {
+          placeholder: "default",
+          value,
+          onChange: (e) => onChange(e.target.value)
+        }
+      ),
+      options.length > 0 && /* @__PURE__ */ jsxRuntimeExports.jsx("button", { className: "ghost tiny", onClick: () => setFree(false), children: "list" })
+    ] });
+  }
+  return /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "freemodel", children: [
+    /* @__PURE__ */ jsxRuntimeExports.jsxs("select", { value, onChange: (e) => onChange(e.target.value), children: [
+      /* @__PURE__ */ jsxRuntimeExports.jsx("option", { value: "", children: "CLI default" }),
+      options.map((m2) => /* @__PURE__ */ jsxRuntimeExports.jsx("option", { value: m2.id, title: m2.note, children: m2.label === m2.id ? m2.id : `${m2.label} · ${m2.id}` }, m2.id))
+    ] }),
+    /* @__PURE__ */ jsxRuntimeExports.jsx("button", { className: "ghost tiny", onClick: () => setFree(true), title: "Type a model id", children: "type" })
+  ] });
+}
+async function api_harnesses() {
+  const res = await fetch("/api/harnesses");
+  if (!res.ok) throw new Error(await res.text());
+  return res.json();
+}
+function Mark({ size = 22, className = "" }) {
+  return /* @__PURE__ */ jsxRuntimeExports.jsxs("svg", { width: size, height: size, viewBox: "0 0 24 24", fill: "none", className, "aria-hidden": "true", children: [
+    /* @__PURE__ */ jsxRuntimeExports.jsx("path", { d: "M2.5 6.5h8.5", stroke: "currentColor", strokeWidth: "2.4", strokeLinecap: "round", opacity: ".38" }),
+    /* @__PURE__ */ jsxRuntimeExports.jsx("path", { d: "M2.5 12h12", stroke: "currentColor", strokeWidth: "2.4", strokeLinecap: "round", opacity: ".68" }),
+    /* @__PURE__ */ jsxRuntimeExports.jsx("path", { d: "M2.5 17.5h8.5", stroke: "currentColor", strokeWidth: "2.4", strokeLinecap: "round", opacity: ".38" }),
+    /* @__PURE__ */ jsxRuntimeExports.jsx(
+      "path",
+      {
+        d: "M15.5 7.2 20.8 12l-5.3 4.8",
+        stroke: "currentColor",
+        strokeWidth: "2.4",
+        strokeLinecap: "round",
+        strokeLinejoin: "round"
+      }
+    )
+  ] });
+}
+function Wordmark({ size = 22 }) {
+  return /* @__PURE__ */ jsxRuntimeExports.jsxs("span", { className: "wordmark", children: [
+    /* @__PURE__ */ jsxRuntimeExports.jsx(Mark, { size }),
+    /* @__PURE__ */ jsxRuntimeExports.jsx("b", { children: "drove" })
+  ] });
+}
+function PipelineStrip({ workspace, onConfigure }) {
+  const h = workspace.harness;
+  const m2 = workspace.models ?? {};
+  const verify = workspace.repos.flatMap((r2) => r2.verify);
+  const stages = [
+    { key: "plan", label: "Plan", by: h.plan, model: m2.plan, does: "Reads your code, writes a plan" },
+    { key: "execute", label: "Build", by: h.execute, model: m2.execute, does: "Writes it on an isolated branch" },
+    { key: "review", label: "Review", by: h.review, model: m2.review, does: "A different model judges the diff" },
+    {
+      key: "verify",
+      label: "Verify",
+      by: verify.length ? `${verify.length} command${verify.length === 1 ? "" : "s"}` : "not set",
+      does: verify.length ? verify.join(", ") : "Add [verify] to .drove.toml"
+    },
+    { key: "deliver", label: "Deliver", by: "branch", does: "Plus an evidence pack. Never pushes" }
+  ];
+  return /* @__PURE__ */ jsxRuntimeExports.jsxs("section", { className: "pipe", children: [
+    /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "pipe-head", children: [
+      /* @__PURE__ */ jsxRuntimeExports.jsxs("span", { className: "eyebrow", children: [
+        "How ",
+        workspace.name,
+        " runs"
+      ] }),
+      /* @__PURE__ */ jsxRuntimeExports.jsx("button", { className: "ghost tiny", onClick: onConfigure, children: "Configure stages →" })
+    ] }),
+    /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "pipe-row", children: stages.map((s, i) => /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: `pstage s-${s.key}`, children: [
+      /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "tick" }),
+      /* @__PURE__ */ jsxRuntimeExports.jsx("b", { children: s.label }),
+      /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: `by ${s.by === "not set" ? "unset" : ""}`, children: s.by }),
+      s.model && /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "model", children: s.model }),
+      /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "does", children: s.does }),
+      i === 0 && /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "gate-note", children: "⏸ you approve" })
+    ] }, s.key)) }),
+    h.review === h.execute && /* @__PURE__ */ jsxRuntimeExports.jsxs("p", { className: "pipe-warn", children: [
+      h.execute,
+      " is set to review its own work. A model that just argued for a shortcut tends to accept it — pick a different harness for Review."
+    ] })
+  ] });
+}
+const COLUMNS = [
+  { key: "plan", label: "Plan", hint: "waiting on you" },
+  { key: "build", label: "Build", hint: "agents writing code" },
+  { key: "review", label: "Review", hint: "independent judgement" },
+  { key: "verify", label: "Verify", hint: "your own tests" },
+  { key: "done", label: "Done", hint: "branch ready" }
+];
+function columnFor(feature) {
+  const status = feature.status;
+  if (["delivered", "landed"].includes(status)) return "done";
+  if (["verify_failed"].includes(status)) return "verify";
+  if (["reviewing", "needs_human"].includes(status)) return "review";
+  if (["verifying", "verify_failed"].includes(status)) return "verify";
+  if (["reviewing", "needs_human"].includes(status)) return "review";
+  if (["approved", "executing", "fixing", "no_changes", "failed"].includes(status)) return "build";
+  return "plan";
+}
+function Board({ features, onOpen }) {
+  return /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "board", children: COLUMNS.map((col) => {
+    const cards = features.filter((f2) => columnFor(f2) === col.key);
+    return /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "bcol", children: [
+      /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "bcol-head", children: [
+        /* @__PURE__ */ jsxRuntimeExports.jsx("b", { children: col.label }),
+        /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "n", children: cards.length || "" }),
+        /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "hint", children: col.hint })
+      ] }),
+      /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "bcol-body", children: [
+        cards.length === 0 && /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "bempty" }),
+        cards.map((f2) => /* @__PURE__ */ jsxRuntimeExports.jsx(BoardCard, { feature: f2, onOpen }, f2.id))
+      ] })
+    ] }, col.key);
+  }) });
+}
+function BoardCard({ feature, onOpen }) {
+  const status = feature.status;
+  const { at } = progress(status);
+  return /* @__PURE__ */ jsxRuntimeExports.jsxs(
+    "button",
+    {
+      className: `bcard ${feature.status === "awaiting_approval" ? "gate" : ""} ${needsYou(feature) && feature.status !== "awaiting_approval" ? "blocked" : ""}`,
+      onClick: () => onOpen(feature.id),
+      children: [
+        /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "t", children: feature.title }),
+        /* @__PURE__ */ jsxRuntimeExports.jsx(Rail, { status }),
+        /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "meta", children: [
+          /* @__PURE__ */ jsxRuntimeExports.jsx(Pill, { status: feature.status, busy: feature.busy }),
+          /* @__PURE__ */ jsxRuntimeExports.jsxs("span", { className: "step", children: [
+            Math.min(at + 1, 5),
+            "/5"
+          ] })
+        ] }),
+        /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "br mono", children: feature.branch })
+      ]
+    }
+  );
+}
+function Agents({ agents }) {
+  const [copied, setCopied] = reactExports.useState("");
+  if (agents.length === 0) {
+    return /* @__PURE__ */ jsxRuntimeExports.jsx(Blank, { title: "No agents have run yet", body: "Start a feature and the sessions appear here." });
+  }
+  return /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "agents", children: [
+    agents.map((a) => /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: `agent ${a.running ? "on" : ""}`, children: [
+      /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "who", children: [
+        /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: `beacon ${a.running ? "live" : ""}` }),
+        /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { children: [
+          /* @__PURE__ */ jsxRuntimeExports.jsx("b", { children: a.harness }),
+          /* @__PURE__ */ jsxRuntimeExports.jsxs("span", { className: "role", children: [
+            a.role,
+            a.attempt > 1 ? ` · round ${a.attempt}` : ""
+          ] })
+        ] })
+      ] }),
+      /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "what", children: [
+        /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "task", children: a.title }),
+        /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "sid mono", title: a.session_id, children: a.session_id })
+      ] }),
+      /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "cost", children: [
+        /* @__PURE__ */ jsxRuntimeExports.jsxs("span", { children: [
+          (a.tokens_in + a.tokens_out).toLocaleString(),
+          " tok"
+        ] }),
+        /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "usd", children: a.cost_usd != null ? `$${a.cost_usd.toFixed(3)}` : "—" })
+      ] }),
+      /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "acts", children: a.resume ? /* @__PURE__ */ jsxRuntimeExports.jsx(
+        "button",
+        {
+          className: "tiny",
+          onClick: () => {
+            navigator.clipboard?.writeText(a.resume);
+            setCopied(a.session_id);
+          },
+          title: a.resume,
+          children: copied === a.session_id ? "copied" : "Open session"
+        }
+      ) : /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "dim", children: "no resume" }) })
+    ] }, `${a.session_id}-${a.stage}-${a.attempt}`)),
+    /* @__PURE__ */ jsxRuntimeExports.jsx("p", { className: "foot-note", children: "“Open session” copies the command that reattaches you to that agent’s real conversation in its worktree. Drove drives the CLIs headlessly, so there is no live terminal to attach to — but the transcript is real and you can carry on talking to it." })
+  ] });
+}
+function Runs({ runs, onOpen }) {
+  if (runs.length === 0) {
+    return /* @__PURE__ */ jsxRuntimeExports.jsx(Blank, { title: "No runs yet", body: "Every approved plan becomes a run, recorded here with what it cost." });
+  }
+  return /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "runs", children: [
+    /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "rrow head", children: [
+      /* @__PURE__ */ jsxRuntimeExports.jsx("span", { children: "Feature" }),
+      /* @__PURE__ */ jsxRuntimeExports.jsx("span", { children: "Run" }),
+      /* @__PURE__ */ jsxRuntimeExports.jsx("span", { children: "Status" }),
+      /* @__PURE__ */ jsxRuntimeExports.jsx("span", { children: "Took" }),
+      /* @__PURE__ */ jsxRuntimeExports.jsx("span", { children: "Tokens" }),
+      /* @__PURE__ */ jsxRuntimeExports.jsx("span", { children: "Cost" })
+    ] }),
+    runs.map((r2) => /* @__PURE__ */ jsxRuntimeExports.jsxs("button", { className: "rrow", onClick: () => onOpen(r2.feature_id), children: [
+      /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "ttl", children: r2.title }),
+      /* @__PURE__ */ jsxRuntimeExports.jsxs("span", { className: "dim", children: [
+        "#",
+        r2.iteration
+      ] }),
+      /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: `st ${r2.status}`, children: r2.status.replace(/_/g, " ") }),
+      /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "dim", children: r2.duration_s != null ? fmt(r2.duration_s) : "—" }),
+      /* @__PURE__ */ jsxRuntimeExports.jsxs("span", { className: "dim", children: [
+        ((r2.tokens_in + r2.tokens_out) / 1e3).toFixed(1),
+        "k"
+      ] }),
+      /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "dim", children: r2.cost_usd ? `$${r2.cost_usd.toFixed(2)}` : "—" })
+    ] }, r2.id))
+  ] });
+}
+const fmt = (s) => s < 60 ? `${s}s` : `${Math.floor(s / 60)}m ${s % 60}s`;
+function Blank({ title, body }) {
+  return /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "blank", children: [
+    /* @__PURE__ */ jsxRuntimeExports.jsx("h3", { children: title }),
+    /* @__PURE__ */ jsxRuntimeExports.jsx("p", { children: body })
+  ] });
+}
 const PIVOTABLE = ["delivered", "landed", "needs_human", "verify_failed", "no_changes"];
+const ACTIVE = ["planning", "awaiting_approval", "approved", "executing", "fixing", "reviewing", "verifying"];
 function App() {
   const [workspaces, setWorkspaces] = reactExports.useState([]);
-  const [workspaceId, setWorkspaceId] = reactExports.useState(() => localStorage.getItem("vorflux.workspace") ?? "");
+  const [workspaceId, setWorkspaceId] = reactExports.useState(() => localStorage.getItem("drove.workspace") ?? "");
   const [features, setFeatures] = reactExports.useState([]);
   const [selected, setSelected] = reactExports.useState(null);
+  const [sheet, setSheet] = reactExports.useState(false);
+  const [screen, setScreen] = reactExports.useState("overview");
+  const [harnesses, setHarnesses] = reactExports.useState([]);
+  const [runs, setRuns] = reactExports.useState([]);
+  const [agents, setAgents] = reactExports.useState([]);
+  const [settings, setSettings] = reactExports.useState(false);
   const [tab, setTab] = reactExports.useState("plan");
   const [diff, setDiff] = reactExports.useState(null);
-  const [evidence, setEvidence] = reactExports.useState("");
+  const [evidence, setEvidence] = reactExports.useState(null);
+  const [replay, setReplay] = reactExports.useState(null);
+  const [browser, setBrowser] = reactExports.useState(null);
+  const [review, setReview] = reactExports.useState(null);
   const [task, setTask] = reactExports.useState("");
   const [error, setError] = reactExports.useState("");
   const refresh = reactExports.useCallback(async () => {
     try {
       const all = await api.workspaces();
       setWorkspaces(all);
-      const active = all.find((w2) => w2.id === workspaceId) ?? all[0];
-      if (active && active.id !== workspaceId) setWorkspaceId(active.id);
-      setFeatures(active ? await api.features(active.id) : []);
+      const active2 = all.find((w2) => w2.id === workspaceId) ?? all[0];
+      if (active2 && active2.id !== workspaceId) setWorkspaceId(active2.id);
+      if (active2) {
+        const [f2, r2, a] = await Promise.all([
+          api.features(active2.id),
+          api.runs(active2.id),
+          api.agents(active2.id)
+        ]);
+        setFeatures(f2);
+        setRuns(r2);
+        setAgents(a);
+      } else {
+        setFeatures([]);
+        setRuns([]);
+        setAgents([]);
+      }
     } catch (e) {
       setError(String(e.message ?? e));
     }
@@ -7390,9 +8012,10 @@ function App() {
     reactExports.useCallback((event) => {
       refresh();
       if (event.kind !== "status") return;
-      if (event.status === "awaiting_approval") notify("Plan ready", "A feature is waiting on your approval.");
-      if (["needs_human", "verify_failed", "failed"].includes(event.status)) {
-        notify("Run stopped", `A feature ended as ${event.status.replace(/_/g, " ")}.`);
+      if (event.status === "awaiting_approval") {
+        notify("Plan ready", "A feature is waiting on your approval.");
+      } else if (NEEDS_YOU[event.status]) {
+        notify("Needs you", NEEDS_YOU[event.status].why);
       }
     }, [refresh])
   );
@@ -7400,20 +8023,29 @@ function App() {
     refresh();
   }, [refresh]);
   reactExports.useEffect(() => {
-    if (!isDesktop) return;
-    const running = features.filter((f2) => f2.busy).length;
-    const waiting = features.filter((f2) => f2.status === "awaiting_approval").length;
-    setPulse({ running, waiting });
-  }, [features]);
+    api.harnesses().then(setHarnesses).catch(() => {
+    });
+  }, []);
   reactExports.useEffect(() => {
-    if (workspaceId) localStorage.setItem("vorflux.workspace", workspaceId);
+    if (workspaceId) localStorage.setItem("drove.workspace", workspaceId);
   }, [workspaceId]);
   const workspace = workspaces.find((w2) => w2.id === workspaceId) ?? null;
   const current = features.find((f2) => f2.id === selected) ?? null;
+  const ready = workspace?.repos.length > 0;
+  reactExports.useEffect(() => {
+    if (!isDesktop) return;
+    setPulse({
+      running: features.filter((f2) => f2.busy).length,
+      waiting: features.filter(needsYou).length
+    });
+  }, [features]);
   reactExports.useEffect(() => {
     if (!current) return;
     if (tab === "diff") api.diff(current.id).then(setDiff).catch(() => setDiff(null));
-    if (tab === "evidence") api.evidence(current.id).then((d) => setEvidence(d.markdown)).catch(() => setEvidence(""));
+    if (tab === "evidence") api.evidence(current.id).then(setEvidence).catch(() => setEvidence(null));
+    if (tab === "live") api.log(current.id).then(setReplay).catch(() => setReplay(null));
+    if (tab === "browser") api.browser(current.id).then(setBrowser).catch(() => setBrowser(null));
+    if (tab === "review") api.review(current.id).then(setReview).catch(() => setReview(null));
   }, [tab, current?.id, current?.status]);
   const act = async (fn) => {
     setError("");
@@ -7434,158 +8066,424 @@ function App() {
       setTab("plan");
     });
   };
-  const ready = workspace?.repos.length > 0;
-  return /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "app", children: [
-    /* @__PURE__ */ jsxRuntimeExports.jsxs("header", { className: "top", children: [
-      /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "brand", children: [
-        /* @__PURE__ */ jsxRuntimeExports.jsx("b", { children: "vorflux" }),
-        /* @__PURE__ */ jsxRuntimeExports.jsx("span", { children: "autopilot" })
+  const active = features.filter((f2) => f2.busy || ACTIVE.includes(f2.status));
+  const settled = features.filter((f2) => !active.includes(f2));
+  const running = features.filter((f2) => f2.busy).length;
+  const blocked = features.filter(needsYou);
+  const waiting = blocked.length;
+  const spend = runs.reduce((sum, r2) => sum + (r2.cost_usd ?? 0), 0);
+  return /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "shell", children: [
+    /* @__PURE__ */ jsxRuntimeExports.jsxs("header", { className: "topbar", children: [
+      /* @__PURE__ */ jsxRuntimeExports.jsx(Wordmark, {}),
+      workspace && /* @__PURE__ */ jsxRuntimeExports.jsxs(jsxRuntimeExports.Fragment, { children: [
+        /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "hdiv" }),
+        /* @__PURE__ */ jsxRuntimeExports.jsxs("button", { className: "ws", onClick: () => setSheet(true), title: "Switch workspace", children: [
+          workspace.name,
+          /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "caret", children: "▾" })
+        ] }),
+        /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "repos", title: "Repositories a feature here may change", children: workspace.repos.length === 0 ? /* @__PURE__ */ jsxRuntimeExports.jsx("button", { className: "ghost tiny", onClick: () => setSheet(true), children: "+ add a repository" }) : /* @__PURE__ */ jsxRuntimeExports.jsxs(jsxRuntimeExports.Fragment, { children: [
+          workspace.repos.slice(0, 4).map((r2) => /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: `chip ${r2.exists ? "" : "missing"}`, title: r2.path, children: r2.name }, r2.path)),
+          workspace.repos.length > 4 && /* @__PURE__ */ jsxRuntimeExports.jsxs("button", { className: "chip add", onClick: () => setSheet(true), children: [
+            "+",
+            workspace.repos.length - 4
+          ] })
+        ] }) })
       ] }),
       /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "grow" }),
-      workspace && /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "chain", title: "Different models plan, implement and review", children: [
-        /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "node", children: workspace.harness.execute }),
-        /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "arrow", children: "implements →" }),
-        /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "node", children: workspace.harness.review }),
-        /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "arrow", children: "reviews" })
+      workspace && /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "stats-centre", children: [
+        /* @__PURE__ */ jsxRuntimeExports.jsxs("span", { className: running > 0 ? "sb-live" : "", children: [
+          /* @__PURE__ */ jsxRuntimeExports.jsx("b", { children: running }),
+          " running"
+        ] }),
+        /* @__PURE__ */ jsxRuntimeExports.jsxs("span", { className: waiting > 0 ? "sb-gate" : "", children: [
+          /* @__PURE__ */ jsxRuntimeExports.jsx("b", { children: waiting }),
+          " needs you"
+        ] }),
+        /* @__PURE__ */ jsxRuntimeExports.jsxs("span", { children: [
+          /* @__PURE__ */ jsxRuntimeExports.jsx("b", { children: features.length }),
+          " ",
+          features.length === 1 ? "feature" : "features"
+        ] }),
+        /* @__PURE__ */ jsxRuntimeExports.jsxs("span", { children: [
+          /* @__PURE__ */ jsxRuntimeExports.jsx("b", { children: runs.length }),
+          " ",
+          runs.length === 1 ? "run" : "runs"
+        ] }),
+        spend > 0 && /* @__PURE__ */ jsxRuntimeExports.jsxs("span", { children: [
+          /* @__PURE__ */ jsxRuntimeExports.jsxs("b", { children: [
+            "$",
+            spend.toFixed(2)
+          ] }),
+          " spent"
+        ] })
       ] }),
-      /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: `live-dot ${connected ? "" : "off"}`, title: connected ? "live" : "reconnecting" })
+      workspace && /* @__PURE__ */ jsxRuntimeExports.jsxs("button", { className: "settings-btn", onClick: () => setSettings(true), title: "Choose the harness and model for each stage", children: [
+        /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "gear", children: "⚙" }),
+        " Stages"
+      ] }),
+      /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: `live-dot ${connected ? "" : "off"}`, title: connected ? "engine connected" : "reconnecting" })
     ] }),
     workspace && !workspace.independent_review && /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "banner warn", children: [
       workspace.harness.execute,
       " is set to review its own work — that is not an independent review. Set a different ",
       /* @__PURE__ */ jsxRuntimeExports.jsx("code", { children: "review" }),
       " harness in ",
-      /* @__PURE__ */ jsxRuntimeExports.jsx("code", { children: ".vorflux.toml" }),
+      /* @__PURE__ */ jsxRuntimeExports.jsx("code", { children: ".drove.toml" }),
       "."
     ] }),
     error && /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "banner bad", children: error }),
-    /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "body", children: [
-      /* @__PURE__ */ jsxRuntimeExports.jsxs("aside", { className: "sidebar", children: [
-        /* @__PURE__ */ jsxRuntimeExports.jsx(
-          WorkspaceBar,
-          {
-            workspaces,
-            current: workspace,
-            onSelect: (id2) => {
-              setWorkspaceId(id2);
-              setSelected(null);
-            },
-            onCreate: (name) => act(async () => {
-              const created = await api.createWorkspace(name);
-              setWorkspaceId(created.id);
-            }),
-            onAddRepo: (path) => act(() => api.addRepo(workspaceId, path)),
-            onRemoveRepo: (path) => act(() => api.removeRepo(workspaceId, path))
-          }
-        ),
-        /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "pad composer", children: [
-          /* @__PURE__ */ jsxRuntimeExports.jsx(
-            "textarea",
-            {
-              rows: 3,
-              placeholder: ready ? "What do you want built?" : "Add a repository first",
-              value: task,
-              disabled: !ready,
-              onChange: (e) => setTask(e.target.value),
-              onKeyDown: (e) => {
-                if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) create();
-              }
-            }
-          ),
-          /* @__PURE__ */ jsxRuntimeExports.jsx("button", { className: "primary", onClick: create, disabled: !task.trim() || !ready, children: "Plan it" })
-        ] }),
-        /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "scroll", children: [
-          /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "section-head", children: [
-            /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "eyebrow", children: "Features" }),
-            /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "eyebrow", children: features.length || "" })
-          ] }),
-          features.length === 0 && /* @__PURE__ */ jsxRuntimeExports.jsx("p", { style: { color: "var(--text-3)", fontSize: 12.5, padding: "0 4px" }, children: "Nothing yet. Describe a feature above and it will plan one." }),
-          features.map((feature) => /* @__PURE__ */ jsxRuntimeExports.jsxs(
+    settings && workspace && /* @__PURE__ */ jsxRuntimeExports.jsx(
+      SettingsSheet,
+      {
+        workspace,
+        harnesses,
+        onClose: () => setSettings(false),
+        onSave: (harness, models) => act(() => api.saveSettings(workspace.id, harness, models))
+      }
+    ),
+    sheet && /* @__PURE__ */ jsxRuntimeExports.jsx(
+      WorkspaceSheet,
+      {
+        workspaces,
+        current: workspace,
+        onClose: () => setSheet(false),
+        onSelect: (id2) => {
+          setWorkspaceId(id2);
+          setSelected(null);
+        },
+        onCreate: (name) => act(async () => {
+          const created = await api.createWorkspace(name);
+          setWorkspaceId(created.id);
+        }),
+        onAddRepo: (path) => act(() => api.addRepo(workspaceId, path)),
+        onRemoveRepo: (path) => act(() => api.removeRepo(workspaceId, path))
+      }
+    ),
+    /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "work", children: [
+      /* @__PURE__ */ jsxRuntimeExports.jsxs("nav", { className: "nav", children: [
+        /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "group", children: [
+          /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "eyebrow", children: workspace?.name ?? "Workspace" }),
+          [
+            ["overview", "◉", "Overview"],
+            ["board", "▦", "Board"],
+            ["agents", "◆", "Agents"],
+            ["runs", "▶", "Runs"]
+          ].map(([key, ico, label2]) => /* @__PURE__ */ jsxRuntimeExports.jsxs(
             "button",
             {
-              className: `frow ${feature.id === selected ? "on" : ""}`,
+              className: screen === key && !current ? "on" : "",
               onClick: () => {
-                setSelected(feature.id);
-                setTab("plan");
+                setScreen(key);
+                setSelected(null);
               },
               children: [
-                /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "title", children: feature.title }),
-                /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "under", children: [
-                  /* @__PURE__ */ jsxRuntimeExports.jsx(Rail, { status: feature.busy ? "executing" : feature.status }),
-                  /* @__PURE__ */ jsxRuntimeExports.jsx(Pill, { status: feature.status, busy: feature.busy }),
-                  feature.iterations > 1 && /* @__PURE__ */ jsxRuntimeExports.jsxs("span", { className: "iter", children: [
-                    "·  ",
-                    feature.iterations,
-                    " runs"
-                  ] })
-                ] })
+                /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "ico", children: ico }),
+                label2
               ]
             },
-            feature.id
+            key
           ))
+        ] }),
+        blocked.length > 0 && /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "group needs", children: [
+          /* @__PURE__ */ jsxRuntimeExports.jsxs("span", { className: "eyebrow", children: [
+            "Needs you ",
+            /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "count", children: blocked.length })
+          ] }),
+          blocked.map((f2) => /* @__PURE__ */ jsxRuntimeExports.jsxs(
+            "button",
+            {
+              className: `nyitem ${f2.id === selected ? "on" : ""}`,
+              onClick: () => setSelected(f2.id),
+              title: `${f2.title} — ${NEEDS_YOU[f2.status]?.why ?? ""}`,
+              children: [
+                /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: `dot ${f2.status}` }),
+                /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "t", children: f2.title })
+              ]
+            },
+            f2.id
+          ))
+        ] }),
+        /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "group", children: [
+          /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "eyebrow", children: "Configure" }),
+          /* @__PURE__ */ jsxRuntimeExports.jsxs("button", { onClick: () => setSettings(true), children: [
+            /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "ico", children: "⚙" }),
+            "Stages"
+          ] }),
+          /* @__PURE__ */ jsxRuntimeExports.jsxs("button", { onClick: () => setSheet(true), children: [
+            /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "ico", children: "▤" }),
+            "Workspace"
+          ] })
         ] })
       ] }),
-      /* @__PURE__ */ jsxRuntimeExports.jsxs("main", { className: "main", children: [
-        !workspace && /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "empty", children: /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "box", children: [
-          /* @__PURE__ */ jsxRuntimeExports.jsx("h3", { children: "Create a workspace" }),
-          /* @__PURE__ */ jsxRuntimeExports.jsx("p", { children: "A workspace is the set of repositories a feature may change. Most have one; add several when a change spans an API and the things that call it." })
-        ] }) }),
-        workspace && !ready && /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "empty", children: /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "box", children: [
-          /* @__PURE__ */ jsxRuntimeExports.jsxs("h3", { children: [
+      /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "pane", children: !workspace ? /* @__PURE__ */ jsxRuntimeExports.jsx(FirstRun, { onCreate: (name) => act(async () => {
+        const created = await api.createWorkspace(name);
+        setWorkspaceId(created.id);
+        setSheet(true);
+      }) }) : current ? /* @__PURE__ */ jsxRuntimeExports.jsx(
+        Detail,
+        {
+          feature: current,
+          logs: logs[current.id] ?? [],
+          replay,
+          browser,
+          review,
+          connected,
+          tab,
+          setTab,
+          diff,
+          evidence,
+          onBack: () => setSelected(null),
+          act,
+          onDiscard: () => setSelected(null)
+        }
+      ) : screen === "board" ? /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "pane-inner", children: [
+        /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "pane-head", children: [
+          /* @__PURE__ */ jsxRuntimeExports.jsx("h2", { children: "Board" }),
+          /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "sub", children: "Cards move themselves — the column is where the run actually got to." })
+        ] }),
+        features.length === 0 ? /* @__PURE__ */ jsxRuntimeExports.jsx(Blank, { title: "Nothing on the board", body: "Describe a feature on Overview and it appears here." }) : /* @__PURE__ */ jsxRuntimeExports.jsx(Board, { features, onOpen: (id2) => setSelected(id2) })
+      ] }) : screen === "agents" ? /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "pane-inner mid", children: [
+        /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "pane-head", children: [
+          /* @__PURE__ */ jsxRuntimeExports.jsx("h2", { children: "Agents" }),
+          /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "sub", children: "Every session Drove has run, and how to reopen it." })
+        ] }),
+        /* @__PURE__ */ jsxRuntimeExports.jsx(Agents, { agents })
+      ] }) : screen === "runs" ? /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "pane-inner mid", children: [
+        /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "pane-head", children: [
+          /* @__PURE__ */ jsxRuntimeExports.jsx("h2", { children: "Runs" }),
+          /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "sub", children: "What Drove actually did, and what it cost." })
+        ] }),
+        /* @__PURE__ */ jsxRuntimeExports.jsx(Runs, { runs, onOpen: (id2) => setSelected(id2) })
+      ] }) : /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "pane-inner narrow", children: [
+        /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "hero", children: [
+          /* @__PURE__ */ jsxRuntimeExports.jsx("h1", { children: "What do you want built?" }),
+          !ready && /* @__PURE__ */ jsxRuntimeExports.jsxs("p", { className: "sub", children: [
+            "Add a repository first — ",
             workspace.name,
-            " has no repositories"
+            " has none."
           ] }),
-          /* @__PURE__ */ jsxRuntimeExports.jsx("p", { children: "Add one from the sidebar — paste its path. vorflux never writes to your working copy; it checks out an isolated worktree per feature." })
-        ] }) }),
-        workspace && ready && !current && /* @__PURE__ */ jsxRuntimeExports.jsx(Overview, { workspace, features, onPick: (id2) => {
-          setSelected(id2);
-          setTab("plan");
-        } }),
-        current && /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: `main-inner ${current.status === "awaiting_approval" ? "gated" : ""}`, children: [
-          /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "dhead", children: /* @__PURE__ */ jsxRuntimeExports.jsx("h2", { children: current.title }) }),
-          /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "dmeta", children: [
-            /* @__PURE__ */ jsxRuntimeExports.jsx(Pill, { status: current.status, busy: current.busy }),
-            /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "sep", children: "·" }),
-            /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "mono", children: current.branch }),
-            /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "sep", children: "→" }),
-            /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "mono", children: current.base }),
-            current.iterations > 1 && /* @__PURE__ */ jsxRuntimeExports.jsxs(jsxRuntimeExports.Fragment, { children: [
-              /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "sep", children: "·" }),
-              /* @__PURE__ */ jsxRuntimeExports.jsxs("span", { children: [
-                current.iterations,
-                " runs"
-              ] })
-            ] })
-          ] }),
-          /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { style: { marginBottom: 20 }, children: [
-            /* @__PURE__ */ jsxRuntimeExports.jsx(Rail, { status: current.busy ? "executing" : current.status, large: true }),
-            /* @__PURE__ */ jsxRuntimeExports.jsx(StageLegend, { status: current.busy ? "executing" : current.status })
-          ] }),
-          /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "tabs", children: ["plan", "live", "diff", "evidence"].map((name) => /* @__PURE__ */ jsxRuntimeExports.jsxs("button", { className: tab === name ? "on" : "", onClick: () => setTab(name), children: [
-            name,
-            name === "live" && logs[current.id]?.length > 0 && /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "count", children: logs[current.id].length })
-          ] }, name)) }),
-          tab === "plan" && /* @__PURE__ */ jsxRuntimeExports.jsxs(jsxRuntimeExports.Fragment, { children: [
-            /* @__PURE__ */ jsxRuntimeExports.jsx(Plan, { plan: current.plan }),
-            current.status === "awaiting_approval" && /* @__PURE__ */ jsxRuntimeExports.jsx(
-              Gate,
+          /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "prompt", children: [
+            /* @__PURE__ */ jsxRuntimeExports.jsx(
+              "textarea",
               {
-                busy: current.busy,
-                onApprove: () => act(() => api.approve(current.id)),
-                onDecline: () => act(async () => {
-                  await api.decline(current.id);
-                  setSelected(null);
-                }),
-                onRevise: (feedback) => act(() => api.revise(current.id, feedback))
+                rows: 2,
+                placeholder: ready ? "Describe it the way you would to a colleague…" : "Add a repository to begin",
+                value: task,
+                disabled: !ready,
+                onChange: (e) => setTask(e.target.value),
+                onKeyDown: (e) => {
+                  if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) create();
+                }
               }
             ),
-            PIVOTABLE.includes(current.status) && /* @__PURE__ */ jsxRuntimeExports.jsx(Pivot, { busy: current.busy, onPivot: (intent) => act(() => api.pivot(current.id, intent)) })
+            /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "foot", children: [
+              /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "kbd", children: "Cmd + Enter" }),
+              /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "grow" }),
+              /* @__PURE__ */ jsxRuntimeExports.jsx("button", { className: "primary", onClick: create, disabled: !task.trim() || !ready, children: "Plan it" })
+            ] })
+          ] })
+        ] }),
+        /* @__PURE__ */ jsxRuntimeExports.jsx(PipelineStrip, { workspace, onConfigure: () => setSettings(true) }),
+        active.length > 0 && /* @__PURE__ */ jsxRuntimeExports.jsxs(jsxRuntimeExports.Fragment, { children: [
+          /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "strip", children: [
+            /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "eyebrow", children: "In flight" }),
+            /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "rule" })
           ] }),
-          tab === "live" && /* @__PURE__ */ jsxRuntimeExports.jsx(Log, { lines: logs[current.id] ?? [], connected }),
-          tab === "diff" && /* @__PURE__ */ jsxRuntimeExports.jsx(Diff, { text: diff?.diff, repos: diff?.repos }),
-          tab === "evidence" && (evidence ? /* @__PURE__ */ jsxRuntimeExports.jsx("pre", { className: "block", children: evidence }) : /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "card", children: /* @__PURE__ */ jsxRuntimeExports.jsx("p", { style: { color: "var(--text-3)" }, children: "No evidence pack yet — one is written when a run finishes." }) }))
+          active.map((f2) => /* @__PURE__ */ jsxRuntimeExports.jsx(FeatureCard, { feature: f2, onOpen: setSelected }, f2.id))
+        ] }),
+        settled.length > 0 && /* @__PURE__ */ jsxRuntimeExports.jsxs(jsxRuntimeExports.Fragment, { children: [
+          /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "strip", children: [
+            /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "eyebrow", children: "Done" }),
+            /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "rule" })
+          ] }),
+          settled.slice(0, 5).map((f2) => /* @__PURE__ */ jsxRuntimeExports.jsx(FeatureCard, { feature: f2, onOpen: setSelected }, f2.id)),
+          settled.length > 5 && /* @__PURE__ */ jsxRuntimeExports.jsxs("button", { className: "ghost tiny", onClick: () => setScreen("board"), children: [
+            "see all ",
+            features.length,
+            " on the board →"
+          ] })
+        ] })
+      ] }) })
+    ] })
+  ] });
+}
+function FeatureCard({ feature, onOpen }) {
+  const gate = feature.status === "awaiting_approval";
+  return /* @__PURE__ */ jsxRuntimeExports.jsxs(
+    "button",
+    {
+      className: `fcard ${gate ? "gate" : ""} ${needsYou(feature) && !gate ? "blocked" : ""}`,
+      onClick: () => onOpen(feature.id),
+      children: [
+        /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "top", children: [
+          /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "title", children: feature.title }),
+          /* @__PURE__ */ jsxRuntimeExports.jsx(Pill, { status: feature.status, busy: feature.busy })
+        ] }),
+        /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "under", children: [
+          /* @__PURE__ */ jsxRuntimeExports.jsx(Rail, { status: feature.status }),
+          /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "iter mono", children: feature.branch }),
+          feature.iterations > 1 && /* @__PURE__ */ jsxRuntimeExports.jsxs("span", { className: "iter", children: [
+            "· ",
+            feature.iterations,
+            " runs"
+          ] })
+        ] })
+      ]
+    }
+  );
+}
+function FirstRun({ onCreate }) {
+  const [name, setName] = reactExports.useState("");
+  return /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "stage-inner", children: /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "hero", children: [
+    /* @__PURE__ */ jsxRuntimeExports.jsx(Mark, { size: 40 }),
+    /* @__PURE__ */ jsxRuntimeExports.jsx("h1", { style: { marginTop: 18 }, children: "Name your first workspace" }),
+    /* @__PURE__ */ jsxRuntimeExports.jsx("p", { className: "sub", children: "A workspace is the set of repositories a feature may change. Most have one; add several when a change spans an API and the things that call it." }),
+    /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "prompt", children: [
+      /* @__PURE__ */ jsxRuntimeExports.jsx(
+        "input",
+        {
+          autoFocus: true,
+          placeholder: "product",
+          value: name,
+          onChange: (e) => setName(e.target.value),
+          onKeyDown: (e) => {
+            if (e.key === "Enter" && name.trim()) onCreate(name.trim());
+          },
+          style: { background: "transparent", border: "none", fontSize: 15, padding: 0 }
+        }
+      ),
+      /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "foot", children: [
+        /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "grow" }),
+        /* @__PURE__ */ jsxRuntimeExports.jsx("button", { className: "primary", disabled: !name.trim(), onClick: () => onCreate(name.trim()), children: "Create" })
+      ] })
+    ] })
+  ] }) });
+}
+function Detail({
+  feature,
+  logs,
+  replay,
+  browser,
+  review,
+  connected,
+  tab,
+  setTab,
+  diff,
+  evidence,
+  onBack,
+  act,
+  onDiscard
+}) {
+  const gated = feature.status === "awaiting_approval";
+  const stopped = !gated && Boolean(NEEDS_YOU[feature.status]);
+  const has = feature.has ?? {};
+  const tabs = ["plan", "live", "diff", "review", "browser", "evidence"].filter((name) => {
+    if (name === "plan") return Boolean(feature.plan);
+    if (name === "live") return logs.length > 0 || has.log;
+    return has[name];
+  });
+  reactExports.useEffect(() => {
+    if (tabs.length && !tabs.includes(tab)) setTab(tabs[0]);
+  }, [tabs.join(), tab]);
+  return /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: `stage-inner wide ${gated || stopped ? "gated" : ""}`, children: [
+    /* @__PURE__ */ jsxRuntimeExports.jsx("button", { className: "back", onClick: onBack, children: "← all features" }),
+    /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "dhead", children: /* @__PURE__ */ jsxRuntimeExports.jsx("h2", { children: feature.title }) }),
+    /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "dmeta", children: [
+      /* @__PURE__ */ jsxRuntimeExports.jsx(Pill, { status: feature.status, busy: feature.busy }),
+      /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "sep", children: "·" }),
+      /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "mono", children: feature.branch }),
+      /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "sep", children: "→" }),
+      /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "mono", children: feature.base }),
+      feature.iterations > 1 && /* @__PURE__ */ jsxRuntimeExports.jsxs(jsxRuntimeExports.Fragment, { children: [
+        /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "sep", children: "·" }),
+        /* @__PURE__ */ jsxRuntimeExports.jsxs("span", { children: [
+          feature.iterations,
+          " runs"
         ] })
       ] })
+    ] }),
+    /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { style: { marginBottom: 20 }, children: [
+      /* @__PURE__ */ jsxRuntimeExports.jsx(Rail, { status: feature.status, large: true }),
+      /* @__PURE__ */ jsxRuntimeExports.jsx(StageLegend, { status: feature.status })
+    ] }),
+    /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "tabs", children: tabs.map((name) => /* @__PURE__ */ jsxRuntimeExports.jsxs("button", { className: tab === name ? "on" : "", onClick: () => setTab(name), children: [
+      name,
+      name === "live" && logs.length > 0 && /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "count", children: logs.length })
+    ] }, name)) }),
+    tab === "plan" && /* @__PURE__ */ jsxRuntimeExports.jsxs(jsxRuntimeExports.Fragment, { children: [
+      /* @__PURE__ */ jsxRuntimeExports.jsx(Plan, { plan: feature.plan }),
+      gated && /* @__PURE__ */ jsxRuntimeExports.jsx(
+        Gate,
+        {
+          busy: feature.busy,
+          onApprove: () => act(() => api.approve(feature.id)),
+          onDecline: () => act(async () => {
+            await api.decline(feature.id);
+            onDiscard();
+          }),
+          onRevise: (feedback) => act(() => api.revise(feature.id, feedback))
+        }
+      ),
+      !gated && NEEDS_YOU[feature.status] && /* @__PURE__ */ jsxRuntimeExports.jsx(
+        Stopped,
+        {
+          feature,
+          busy: feature.busy,
+          onPivot: (intent) => act(() => api.pivot(feature.id, intent)),
+          onRetry: feature.plan ? () => act(() => api.retry(feature.id)) : null,
+          onDiscard: () => act(async () => {
+            await api.decline(feature.id);
+            onDiscard();
+          })
+        }
+      ),
+      !NEEDS_YOU[feature.status] && PIVOTABLE.includes(feature.status) && /* @__PURE__ */ jsxRuntimeExports.jsx(Pivot, { busy: feature.busy, onPivot: (intent) => act(() => api.pivot(feature.id, intent)) })
+    ] }),
+    tab === "live" && /* @__PURE__ */ jsxRuntimeExports.jsx(Log, { lines: logs, replay, connected }),
+    tab === "diff" && /* @__PURE__ */ jsxRuntimeExports.jsx(Diff, { text: diff?.diff, repos: diff?.repos }),
+    tab === "review" && /* @__PURE__ */ jsxRuntimeExports.jsx(Review, { data: review }),
+    tab === "browser" && /* @__PURE__ */ jsxRuntimeExports.jsx(BrowserChecks, { featureId: feature.id, data: browser }),
+    tab === "evidence" && /* @__PURE__ */ jsxRuntimeExports.jsx(
+      Evidence,
+      {
+        pack: evidence?.pack,
+        markdown: evidence?.markdown,
+        onCopy: (md2) => navigator.clipboard?.writeText(md2)
+      }
+    )
+  ] });
+}
+function Stopped({ feature, busy, onPivot, onRetry, onDiscard }) {
+  const [intent, setIntent] = reactExports.useState("");
+  const info = NEEDS_YOU[feature.status];
+  const send = () => {
+    const text = intent.trim();
+    if (!text) return;
+    setIntent("");
+    onPivot(text);
+  };
+  return /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "gatebar stopped", children: [
+    /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "reason", children: info.why }),
+    feature.error && /* @__PURE__ */ jsxRuntimeExports.jsx("pre", { className: "failure", children: feature.error }),
+    /* @__PURE__ */ jsxRuntimeExports.jsx(
+      "textarea",
+      {
+        rows: 2,
+        placeholder: "Tell it what to do differently, and it will re-plan on the same branch…",
+        value: intent,
+        disabled: busy,
+        onChange: (e) => setIntent(e.target.value),
+        onKeyDown: (e) => {
+          if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) send();
+        }
+      }
+    ),
+    /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "row", children: [
+      /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "eyebrow", children: info.verb }),
+      /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "grow" }),
+      /* @__PURE__ */ jsxRuntimeExports.jsx("button", { className: "ghost danger", disabled: busy, onClick: onDiscard, children: "Discard" }),
+      onRetry && /* @__PURE__ */ jsxRuntimeExports.jsx("button", { disabled: busy, onClick: onRetry, title: "Run the same plan again, unchanged", children: "Try again" }),
+      /* @__PURE__ */ jsxRuntimeExports.jsx("button", { className: "primary", disabled: busy || !intent.trim(), onClick: send, children: "Re-plan with this" })
     ] })
   ] });
 }
@@ -7618,7 +8516,7 @@ function Pivot({ busy, onPivot }) {
 function Pulse() {
   const [state, setState] = reactExports.useState({ running: 0, waiting: 0 });
   reactExports.useEffect(() => {
-    window.vorfluxDesktop?.onPulse?.((next) => setState(next ?? { running: 0, waiting: 0 }));
+    window.droveDesktop?.onPulse?.((next) => setState(next ?? { running: 0, waiting: 0 }));
   }, []);
   const { running = 0, waiting = 0 } = state;
   const tone = waiting > 0 ? "wait" : running > 0 ? "run" : "idle";

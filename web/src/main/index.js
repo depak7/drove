@@ -42,7 +42,12 @@ function resolveBin(name) {
 
 function engineCommand() {
   if (app.isPackaged) {
-    return { command: join(process.resourcesPath, 'drove-sidecar'), args: ['serve', '--no-open', '--port', String(PORT)] }
+    // PyInstaller's onedir output is copied to Resources/drove-sidecar by electron-builder.
+    // It includes Python and every server dependency, so end users need neither uv nor Python.
+    return {
+      command: join(process.resourcesPath, 'drove-sidecar', 'drove-sidecar'),
+      args: ['--port', String(PORT)],
+    }
   }
   // Prefer the installed CLI; fall back to running from the source tree.
   const cli = resolveBin('drove')

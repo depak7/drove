@@ -27,7 +27,10 @@ function resolveBin(name) {
 }
 function engineCommand() {
   if (app.isPackaged) {
-    return { command: join(process.resourcesPath, "drove-sidecar"), args: ["serve", "--no-open", "--port", String(PORT)] };
+    return {
+      command: join(process.resourcesPath, "drove-sidecar", "drove-sidecar"),
+      args: ["--port", String(PORT)]
+    };
   }
   const cli = resolveBin("drove");
   if (cli) return { command: cli, args: ["serve", "--no-open", "--port", String(PORT)] };

@@ -85,6 +85,32 @@ uv tool install --force --reinstall .   # required after a UI rebuild: `drove se
                                         # assets baked into the install, not the source tree
 ```
 
+## macOS desktop release
+
+The desktop app embeds the Drove daemon as a PyInstaller sidecar. A downloaded app therefore does
+not require Python, uv, or a checkout of this repository. Build a native-architecture DMG with:
+
+```bash
+cd web
+npm install
+npm run desktop:package
+```
+
+The output is in `web/release/`. `desktop:package` creates `Resources/drove-sidecar/` inside the
+app and Electron starts that executable on localhost; it never depends on a globally installed
+`drove` command. The command deliberately builds only the host architecture: build separately on
+Apple Silicon and Intel Macs for their respective targets, because each DMG must contain a
+matching native Python sidecar.
+
+Browser checks are not available inside the packaged app: the sidecar deliberately excludes
+playwright, whose browsers live in a user cache rather than the bundle, so shipping it would add
+129MB that could not run anything. Use `drove serve` from a checkout for those.
+
+For a public release, run on a machine with an Apple Developer signing certificate and set
+`APPLE_ID`, `APPLE_APP_SPECIFIC_PASSWORD`, and `APPLE_TEAM_ID`. The build signs with the available
+Developer ID certificate, then the included hook notarizes it. Without those credentials the same
+command produces an unsigned local-test DMG only.
+
 Built UI assets are committed. The install path is `uv tool install git+…`, which builds the wheel
 from the git tree, so anything not committed is not installed — and building at install time
 instead would put Node on the critical path for every user.

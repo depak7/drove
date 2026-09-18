@@ -2,6 +2,8 @@
   "name": "drove-web",
   "private": true,
   "version": "0.1.0",
+  "description": "Local autonomous engineering workspace",
+  "author": "Drove",
   "main": "./out/main/index.js",
   "type": "module",
   "scripts": {
@@ -9,7 +11,9 @@
     "build": "vite build",
     "preview": "vite preview",
     "desktop:dev": "electron-vite dev",
-    "desktop:build": "electron-vite build && electron-builder --mac"
+    "desktop:sidecar": "cd .. && uv run --extra desktop pyinstaller --noconfirm --clean --onedir --name drove-sidecar --collect-all drove --exclude-module playwright --distpath web/sidecar-dist --workpath web/.pyinstaller/work --specpath web/.pyinstaller/spec desktop/sidecar.py",
+    "desktop:package": "npm run desktop:sidecar && electron-vite build && electron-builder --mac",
+    "desktop:build": "npm run desktop:package"
   },
   "dependencies": {
     "@electron-toolkit/preload": "^3.0.2",
@@ -17,10 +21,41 @@
     "react-dom": "^18.3.1"
   },
   "devDependencies": {
+    "@electron/notarize": "^2.5.0",
     "@vitejs/plugin-react": "^4.3.1",
     "electron": "^44.4.1",
     "electron-builder": "^26.15.3",
     "electron-vite": "^5.0.0",
     "vite": "^5.4.0"
+  },
+  "build": {
+    "appId": "local.drove.desktop",
+    "productName": "Drove",
+    "icon": "resources/icon.icns",
+    "asar": true,
+    "files": [
+      "out/**/*",
+      "package.json"
+    ],
+    "extraResources": [
+      {
+        "from": "sidecar-dist/drove-sidecar",
+        "to": "drove-sidecar"
+      }
+    ],
+    "afterSign": "resources/notarize.cjs",
+    "mac": {
+      "category": "public.app-category.developer-tools",
+      "target": [
+        "dmg"
+      ],
+      "hardenedRuntime": true,
+      "gatekeeperAssess": false,
+      "entitlements": "resources/entitlements.mac.plist",
+      "entitlementsInherit": "resources/entitlements.mac.plist"
+    },
+    "directories": {
+      "output": "release"
+    }
   }
 }

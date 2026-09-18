@@ -7,6 +7,10 @@ build/
 .pytest_cache/
 .ruff_cache/
 web/node_modules/
+graphify-out/
+web/.pyinstaller/
+web/sidecar-dist/
+web/release/
 
 # Built UI assets ARE committed. The install path is `uv tool install git+...`, which builds the
 # wheel from this source tree — so anything not in git is not in the install. Building at install
