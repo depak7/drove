@@ -146,3 +146,19 @@ async def test_no_configuration_means_the_stage_does_nothing(tmp_path):
     outcome = await browser.run_browser(tmp_path, {}, tmp_path / "s")
     assert not outcome.ran
     assert "no [browser] url" in outcome.skipped
+
+
+async def test_a_browser_that_cannot_start_is_a_skip_not_a_failed_run(site, tmp_path, monkeypatch):
+    """The stage is advisory, so nothing in it may take a run down.
+
+    The playwright package can be installed while its browsers are not — which is precisely the
+    state a packaged app ships in, since the browsers live in a user cache rather than the bundle.
+    """
+    monkeypatch.setenv("PLAYWRIGHT_BROWSERS_PATH", str(tmp_path / "empty"))
+    port = free_port()
+
+    outcome = await browser.run_browser(site, config_for(port, ["/index.html"]), tmp_path / "s")
+
+    assert not outcome.ran
+    assert "could not start a browser" in outcome.skipped
+    assert "playwright install" in outcome.skipped
