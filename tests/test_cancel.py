@@ -177,13 +177,25 @@ async def test_cancelling_harness_stream_kills_its_process_group(tmp_path):
 
 async def test_cancelling_async_verify_kills_the_check_process(tmp_path, monkeypatch):
     pid_file = tmp_path / "verify.pid"
+    later_command = tmp_path / "later-command"
+    later_repo = tmp_path / "later-repo"
     command = f'sh -c \'trap "" TERM; echo $$ > "{pid_file}"; sleep 30\''
-    repo = SimpleNamespace(name="api", config=SimpleNamespace(verify={"test": command}))
+    repo = SimpleNamespace(
+        name="api",
+        config=SimpleNamespace(
+            verify={"test": command, "lint": f'touch "{later_command}"'}
+        ),
+    )
     tree = SimpleNamespace(path=tmp_path, repo=repo)
+    other_repo = SimpleNamespace(
+        name="web",
+        config=SimpleNamespace(verify={"test": f'touch "{later_repo}"'}),
+    )
+    other_tree = SimpleNamespace(path=tmp_path, repo=other_repo)
     monkeypatch.setattr(verify, "TIMEOUT_SECONDS", 30)
     monkeypatch.setattr("drove.vcs.tree.touched", lambda trees: trees)
 
-    task = asyncio.create_task(verify.run_all_async([tree], SimpleNamespace()))
+    task = asyncio.create_task(verify.run_all_async([tree, other_tree], SimpleNamespace()))
     for _ in range(100):
         if pid_file.exists():
             break
@@ -200,3 +212,6 @@ async def test_cancelling_async_verify_kills_the_check_process(tmp_path, monkeyp
             break
         await asyncio.sleep(0.01)
     assert not process_exists(child_pid)
+    await asyncio.sleep(0.1)  # let the worker observe the stop event after communicate() returns
+    assert not later_command.exists()
+    assert not later_repo.exists()

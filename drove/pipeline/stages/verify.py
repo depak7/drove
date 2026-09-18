@@ -12,6 +12,7 @@ import contextlib
 import os
 import signal
 import subprocess
+import threading
 import time
 from collections.abc import Callable
 from dataclasses import dataclass, field
@@ -77,9 +78,12 @@ def run_verify(
     commands: dict[str, str],
     repo: str = "",
     register: Callable[[subprocess.Popen[str]], None] | None = None,
+    stop: threading.Event | None = None,
 ) -> VerifyOutcome:
     outcome = VerifyOutcome()
     for name, command in commands.items():
+        if stop is not None and stop.is_set():
+            break
         if not command or not command.strip():
             continue
         started = time.monotonic()
@@ -98,6 +102,11 @@ def run_verify(
             )
             if register is not None:
                 register(proc)
+            # Cancellation can land between the loop's check and Popen/register. In that race the
+            # event-loop handler may not have seen this process yet, so the worker kills it here.
+            if stop is not None and stop.is_set():
+                _terminate(proc)
+                break
             stdout, stderr = proc.communicate(timeout=TIMEOUT_SECONDS)
             output, code = stdout + stderr, proc.returncode
         except subprocess.TimeoutExpired:
@@ -123,6 +132,7 @@ def run_all(
     trees,
     workspace,
     register: Callable[[subprocess.Popen[str]], None] | None = None,
+    stop: threading.Event | None = None,
 ) -> VerifyOutcome:
     """Each repo's own verify commands, run inside that repo's worktree.
 
@@ -134,10 +144,14 @@ def run_all(
 
     combined = VerifyOutcome()
     for t in trees_mod.touched(trees):
+        if stop is not None and stop.is_set():
+            break
         commands = t.repo.config.verify
         if not commands:
             continue
-        result = run_verify(t.path, commands, repo=t.repo.name, register=register)
+        result = run_verify(
+            t.path, commands, repo=t.repo.name, register=register, stop=stop
+        )
         combined.checks.extend(result.checks)
     return combined
 
@@ -145,10 +159,20 @@ def run_all(
 async def run_all_async(trees, workspace) -> VerifyOutcome:
     """Run verification off-loop and kill its process groups if the pipeline is cancelled."""
     processes: list[subprocess.Popen[str]] = []
+    stop = threading.Event()
+    worker = asyncio.create_task(
+        asyncio.to_thread(run_all, trees, workspace, register=processes.append, stop=stop)
+    )
     try:
-        return await asyncio.to_thread(run_all, trees, workspace, processes.append)
+        return await asyncio.shield(worker)
     except asyncio.CancelledError:
+        stop.set()
         for proc in processes:
             if proc.poll() is None:
-                _terminate(proc)
+                await asyncio.to_thread(_terminate, proc)
+        # Usually the killed command returns immediately and the worker observes `stop` before it
+        # can launch anything else. Bound the join so an unkillable process still cannot delay UI
+        # cancellation until the full verify timeout.
+        with contextlib.suppress(Exception):
+            await asyncio.wait_for(asyncio.shield(worker), timeout=1.0)
         raise
