@@ -287,3 +287,11 @@ def test_retry_still_refuses_a_planless_feature_that_was_not_interrupted(client)
     feature = new_feature(client, ws)
 
     assert client.post(f"/api/features/{feature['id']}/retry").status_code == 400
+
+
+def test_cancelling_a_feature_not_owned_by_this_daemon_is_a_conflict(client):
+    feature = new_feature(client, new_workspace(client))
+
+    response = client.post(f"/api/features/{feature['id']}/cancel")
+
+    assert response.status_code == 409

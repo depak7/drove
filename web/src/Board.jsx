@@ -22,7 +22,7 @@ function columnFor(feature) {
   if (['reviewing', 'needs_human'].includes(status)) return 'review'
   if (['verifying', 'verify_failed'].includes(status)) return 'verify'
   if (['reviewing', 'needs_human'].includes(status)) return 'review'
-  if (['approved', 'executing', 'fixing', 'no_changes', 'failed'].includes(status)) return 'build'
+  if (['approved', 'executing', 'fixing', 'no_changes', 'failed', 'cancelled'].includes(status)) return 'build'
   return 'plan'
 }
 

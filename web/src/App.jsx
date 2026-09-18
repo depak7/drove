@@ -13,7 +13,7 @@ import { NEEDS_YOU, needsYou } from './stages'
 import { Agents, Blank, Runs } from './Agents'
 import { isDesktop, notify, setPulse } from './desktop'
 
-const PIVOTABLE = ['delivered', 'landed', 'needs_human', 'verify_failed', 'no_changes']
+const PIVOTABLE = ['delivered', 'landed', 'needs_human', 'verify_failed', 'no_changes', 'cancelled']
 const ACTIVE = ['planning', 'awaiting_approval', 'approved', 'executing', 'fixing', 'reviewing', 'verifying']
 
 export default function App() {
@@ -444,6 +444,17 @@ function Detail({
         <span className="sep">→</span>
         <span className="mono">{feature.base}</span>
         {feature.iterations > 1 && <><span className="sep">·</span><span>{feature.iterations} runs</span></>}
+        {feature.busy && (
+          <button
+            className="ghost danger"
+            onClick={() => {
+              const keep = 'Stop this run? Commits stay on the branch and uncommitted edits stay in the worktree.'
+              if (window.confirm(keep)) act(() => api.cancel(feature.id))
+            }}
+          >
+            Stop
+          </button>
+        )}
       </div>
 
       <div style={{ marginBottom: 20 }}>
@@ -497,7 +508,7 @@ function Detail({
           busy={feature.busy}
           onPivot={(intent) => act(() => api.pivot(feature.id, intent))}
           onRetry={
-            feature.plan || feature.status === 'interrupted'
+            feature.plan || ['interrupted', 'cancelled'].includes(feature.status)
               ? () => act(() => api.retry(feature.id))
               : null
           }

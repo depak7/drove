@@ -265,6 +265,7 @@ header.top {
 .dhead h2 { margin: 0; font-size: 20px; font-weight: 620; line-height: 1.3; letter-spacing: -.015em; }
 .dmeta { display: flex; align-items: center; gap: 10px; margin: 10px 0 18px; font-size: 12px; color: var(--text-3); }
 .dmeta .sep { opacity: .45; }
+.dmeta button.danger { margin-left: auto; }
 
 .tabs { display: flex; gap: 2px; border-bottom: 1px solid var(--line); margin-bottom: 18px; }
 .tabs button {

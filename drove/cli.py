@@ -434,6 +434,16 @@ def execute_cmd(
                     resume_session=resume, on_event=ui.stream_line, report=report,
                 )
             )
+    except KeyboardInterrupt:
+        with db.connect() as conn:
+            db.finish_run(conn, latest["id"], "cancelled", error="You stopped this run.")
+            db.set_feature_status(conn, row["id"], "cancelled")
+        typer.secho(
+            f"stopped — commits already made are still on the branch; resume with "
+            f"`drove execute {row['id']}`",
+            fg=typer.colors.YELLOW,
+        )
+        raise typer.Exit(130) from None
     except (StageError, ExecuteError, ReviewError, KeyError) as exc:
         with db.connect() as conn:
             db.finish_run(conn, latest["id"], "failed")

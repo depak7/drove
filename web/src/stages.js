@@ -19,6 +19,7 @@ const AT = {
   no_changes:        { at: 1, state: 'stopped' },
   failed:            { at: 1, state: 'failed' },
   interrupted:       { at: 1, state: 'failed' },
+  cancelled:         { at: 1, state: 'stopped' },
   delivered:         { at: 5, state: 'done' },
   landed:            { at: 5, state: 'landed' },
   declined:          { at: 0, state: 'stopped' },
@@ -41,6 +42,7 @@ export const LABEL = {
   no_changes:        ['attn',    'no changes'],
   failed:            ['bad',     'failed'],
   interrupted:       ['attn',    'interrupted'],
+  cancelled:         ['attn',    'cancelled'],
   delivered:         ['good',    'ready to merge'],
   landed:            ['neutral', 'landed'],
   abandoned:         ['neutral', 'abandoned'],
@@ -79,6 +81,10 @@ export const NEEDS_YOU = {
   interrupted: {
     verb: 'Resume it',
     why: 'Drove was stopped before this finished — the app quit, the machine slept or shut down. Nothing is lost: work already committed is on the branch.',
+  },
+  cancelled: {
+    verb: 'Decide what to do',
+    why: 'You stopped this run. Anything already committed is on the branch.',
   },
   no_changes: { verb: 'Decide what to do', why: 'The agent made no changes. The request may already be satisfied, or it was too vague to act on.' },
 }

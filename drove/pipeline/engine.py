@@ -132,7 +132,7 @@ async def run_cycle(
     configured = _configured_checks(trees)
     if configured:
         report("verify", f"running {configured} project command(s)")
-        verified = verify_stage.run_all(trees, workspace)
+        verified = await verify_stage.run_all_async(trees, workspace)
         outcome.verify = verified
         if not verified.passed:
             outcome.status = "verify_failed"

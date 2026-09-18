@@ -126,13 +126,12 @@ async def test_failing_project_checks_block_delivery(trees, solo, monkeypatch):
         "_configured_checks",
         lambda trees_: 1,
     )
-    monkeypatch.setattr(
-        engine.verify_stage,
-        "run_all",
-        lambda trees_, ws: VerifyOutcome(
+    async def run_all_async(trees_, ws):
+        return VerifyOutcome(
             checks=[Check("test", "exit 1", 1, "boom", 0.1, repo="api")]
-        ),
-    )
+        )
+
+    monkeypatch.setattr(engine.verify_stage, "run_all_async", run_all_async)
     outcome = await engine.run_cycle(PLAN, trees, solo, "run-1", "add a thing")
 
     assert outcome.status == "verify_failed"

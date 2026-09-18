@@ -60,6 +60,7 @@ export const api = {
   browser: (id) => get(`/api/features/${id}/browser`),
   review: (id) => get(`/api/features/${id}/review`),
   retry: (id) => post(`/api/features/${id}/retry`),
+  cancel: (id) => post(`/api/features/${id}/cancel`),
   create: (task, workspaceId) =>
     post('/api/features', { task, workspace_id: workspaceId }),
   revise: (id, feedback) => post(`/api/features/${id}/revise`, { feedback }),

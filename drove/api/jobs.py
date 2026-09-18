@@ -27,7 +27,18 @@ from drove.vcs import tree as trees_mod
 
 MAX_CONCURRENT_RUNS = 2
 _semaphore = asyncio.Semaphore(MAX_CONCURRENT_RUNS)
-_active: dict[str, Future] = {}
+
+
+@dataclass
+class Job:
+    future: Future[None] | None = None
+    task: asyncio.Task[None] | None = None
+
+    def done(self) -> bool:
+        return self.future is not None and self.future.done()
+
+
+_active: dict[str, Job] = {}
 _loop: asyncio.AbstractEventLoop | None = None
 
 
@@ -72,43 +83,87 @@ def _event_reporter(feature_id: str):
 
 
 def is_busy(feature_id: str) -> bool:
-    task = _active.get(feature_id)
-    return task is not None and not task.done()
+    job = _active.get(feature_id)
+    return job is not None and not job.done()
 
 
 def active_features() -> list[str]:
-    return [fid for fid, task in _active.items() if not task.done()]
+    return [fid for fid, job in _active.items() if not job.done()]
+
+
+def cancel(feature_id: str) -> bool:
+    """Cancel a job owned by this daemon, from the route thread or the event loop itself."""
+    job = _active.get(feature_id)
+    loop = _loop
+    if job is None or job.done() or loop is None:
+        return False
+
+    def stop() -> None:
+        if job.task is not None:
+            job.task.cancel()
+        else:
+            # run_coroutine_threadsafe may have created its Future before the loop has run the
+            # coroutine's first line. Retry on-loop so cancellation still reaches guarded() and
+            # records the outcome, including for jobs queued behind the semaphore.
+            loop.call_soon(stop)
+
+    loop.call_soon_threadsafe(stop)
+    return True
 
 
 def _spawn(feature_id: str, coro) -> None:
     if is_busy(feature_id):
         raise JobError(f"feature {feature_id} already has a job running")
 
+    job = Job()
+
     async def guarded() -> None:
-        async with _semaphore:
-            try:
+        started = False
+        task = asyncio.current_task()
+        assert task is not None
+        job.task = task
+        try:
+            async with _semaphore:
                 # Stamp ownership before the first await that can block: a run interrupted from
                 # here on is recoverable at the next startup, one interrupted before it is not.
                 with db.connect() as conn:
                     if run := db.latest_run(conn, feature_id):
                         db.claim_run(conn, run["id"])
+                started = True
                 await coro
-            except Exception as exc:
-                # Record why, and on the run — not only on the event stream, which is gone the
-                # moment the page reloads and takes the only account of the failure with it.
-                reason = f"{type(exc).__name__}: {exc}".strip()
-                logging.getLogger("drove").exception("run failed for feature %s", feature_id)
-                with db.connect() as conn:
-                    if run := db.latest_run(conn, feature_id):
-                        db.finish_run(conn, run["id"], "failed", error=reason[:4000])
-                    db.set_feature_status(conn, feature_id, "failed")
-                emit(feature_id, "error", message=reason)
-                emit(feature_id, "status", status="failed")
+        except asyncio.CancelledError:
+            if not started and hasattr(coro, "close"):
+                coro.close()
+            with db.connect() as conn:
+                feature = db.get_feature(conn, feature_id)
+                status = feature["status"] if feature is not None else ""
+                reason = (
+                    f"You stopped this {db.STOPPED_DURING.get(status, 'mid-run')}. "
+                    "Any commits it had already made are still on the branch."
+                )
+                if run := db.latest_run(conn, feature_id):
+                    db.finish_run(conn, run["id"], "cancelled", error=reason)
+                db.set_feature_status(conn, feature_id, "cancelled")
+            emit(feature_id, "error", message=reason)
+            emit(feature_id, "status", status="cancelled")
+            raise
+        except Exception as exc:
+            # Record why, and on the run — not only on the event stream, which is gone the
+            # moment the page reloads and takes the only account of the failure with it.
+            reason = f"{type(exc).__name__}: {exc}".strip()
+            logging.getLogger("drove").exception("run failed for feature %s", feature_id)
+            with db.connect() as conn:
+                if run := db.latest_run(conn, feature_id):
+                    db.finish_run(conn, run["id"], "failed", error=reason[:4000])
+                db.set_feature_status(conn, feature_id, "failed")
+            emit(feature_id, "error", message=reason)
+            emit(feature_id, "status", status="failed")
 
     loop = _loop
     if loop is None:
         raise JobError("daemon loop is not bound; call jobs.bind_loop() at startup")
-    _active[feature_id] = asyncio.run_coroutine_threadsafe(guarded(), loop)
+    _active[feature_id] = job
+    job.future = asyncio.run_coroutine_threadsafe(guarded(), loop)
 
 
 # --- planning ----------------------------------------------------------------------------------

@@ -64,6 +64,10 @@ already made are on the branch, and the executor session is still addressable, s
 the work back up rather than starting over. A run owned by a live `drove execute` in a terminal is
 left alone.
 
+You can also stop an in-flight run from the feature detail view. Stopping keeps commits on the
+feature branch and leaves uncommitted edits in its worktree; the feature becomes **cancelled** so
+you can try the same plan again, re-plan, or discard it after reviewing what remains.
+
 ## Browser checks (optional)
 
 Your tests prove the code is correct. They cannot tell you the page is blank because one component

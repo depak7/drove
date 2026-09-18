@@ -499,7 +499,7 @@ def retry(feature_id: str) -> dict[str, Any]:
         # someone to retype what they already asked for.
         with db.connect() as conn:
             prior = db.latest_run(conn, row["id"])
-            if row["status"] != "interrupted" or prior is None:
+            if row["status"] not in ("interrupted", "cancelled") or prior is None:
                 raise HTTPException(400, "this feature has no approved plan to retry")
             db.create_run(conn, row["id"], prior["intent"])
         jobs.start_plan(row["id"], prior["intent"])
@@ -509,6 +509,19 @@ def retry(feature_id: str) -> dict[str, Any]:
         db.set_feature_status(conn, row["id"], "approved")
     jobs.emit(row["id"], "status", status="approved")
     jobs.start_cycle(row["id"])
+    return _load(feature_id)[1]
+
+
+@api.post("/features/{feature_id}/cancel")
+def cancel(feature_id: str) -> dict[str, Any]:
+    """Stop a run owned by this daemon while keeping its branch and worktree.
+
+    Busy state is memory-local. A run owned by `drove execute` in another process is deliberately
+    not cancellable here, matching the ownership boundary used by interrupted-run reconciliation.
+    """
+    row, _ = _load(feature_id)
+    if not jobs.cancel(row["id"]):
+        raise HTTPException(409, "this feature is not running under this daemon")
     return _load(feature_id)[1]
 
 
