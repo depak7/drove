@@ -87,6 +87,11 @@ def _spawn(feature_id: str, coro) -> None:
     async def guarded() -> None:
         async with _semaphore:
             try:
+                # Stamp ownership before the first await that can block: a run interrupted from
+                # here on is recoverable at the next startup, one interrupted before it is not.
+                with db.connect() as conn:
+                    if run := db.latest_run(conn, feature_id):
+                        db.claim_run(conn, run["id"])
                 await coro
             except Exception as exc:
                 # Record why, and on the run — not only on the event stream, which is gone the

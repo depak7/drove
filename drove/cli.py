@@ -403,6 +403,9 @@ def execute_cmd(
 
     with db.connect() as conn:
         db.set_feature_status(conn, row["id"], "executing")
+        # The daemon retires stranded runs at startup by checking whether the owning process is
+        # still alive. Claim this one so a daemon starting mid-execute leaves it alone.
+        db.claim_run(conn, latest["id"])
 
     def report(stage: str, message: str) -> None:
         typer.secho(f"\n\u25b8 {stage}: {message}", fg=typer.colors.CYAN, err=True)

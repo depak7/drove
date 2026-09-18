@@ -490,10 +490,20 @@ def retry(feature_id: str) -> dict[str, Any]:
     loses the executor session that already knows the codebase.
     """
     row, payload = _load(feature_id)
-    if not payload["plan"]:
-        raise HTTPException(400, "this feature has no approved plan to retry")
     if jobs.is_busy(row["id"]):
         raise HTTPException(409, "this feature is already running")
+
+    if not payload["plan"]:
+        # A run interrupted before it produced a plan has nothing to re-run — but the request that
+        # started it is still recorded, so resuming means planning it again rather than asking
+        # someone to retype what they already asked for.
+        with db.connect() as conn:
+            prior = db.latest_run(conn, row["id"])
+            if row["status"] != "interrupted" or prior is None:
+                raise HTTPException(400, "this feature has no approved plan to retry")
+            db.create_run(conn, row["id"], prior["intent"])
+        jobs.start_plan(row["id"], prior["intent"])
+        return _load(feature_id)[1]
 
     with db.connect() as conn:
         db.set_feature_status(conn, row["id"], "approved")
@@ -694,6 +704,17 @@ async def lifespan(app: FastAPI):
     # Routes are sync `def` and therefore run in a threadpool; the job runner needs an explicit
     # handle on this loop to schedule work onto it from there.
     jobs.bind_loop(asyncio.get_running_loop())
+    # Work in flight when the last daemon died is stranded: its job state lived in memory. Retire
+    # it before the UI can read the database, so nobody is ever shown a run that cannot progress.
+    with db.connect() as conn:
+        stranded = db.reconcile_interrupted(conn)
+    if stranded:
+        # warning, not info: nothing configures logging, so info would never reach the terminal —
+        # and a previous run dying is exactly the thing you want said out loud on the next start.
+        logging.getLogger("drove").warning(
+            "%d feature(s) were interrupted when Drove last stopped and can be resumed: %s",
+            len(stranded), ", ".join(f["title"] for f in stranded),
+        )
     yield
 
 

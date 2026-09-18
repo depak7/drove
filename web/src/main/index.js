@@ -1,4 +1,4 @@
-import { app, BrowserWindow, dialog, ipcMain, Notification } from 'electron'
+import { app, BrowserWindow, dialog, ipcMain, Notification, powerSaveBlocker } from 'electron'
 import { spawn } from 'node:child_process'
 import { existsSync } from 'node:fs'
 import { homedir } from 'node:os'
@@ -14,6 +14,35 @@ const PRELOAD = ['../preload/index.mjs', '../preload/index.js']
 let mainWindow
 let pulseWindow
 let engine
+let awakeId = null
+let awakeSeen = 0
+
+/**
+ * Keep the machine awake while agents are working.
+ *
+ * Idle sleep suspends the harness child processes, and their connections to the model APIs do not
+ * survive it — the CLI wakes into a dead socket and the run dies, minutes of work and real money
+ * gone. Holding an assertion for as long as something is running removes the whole class of
+ * failure. 'prevent-app-suspension' is the mild one: the display may still sleep, only the system
+ * stays up. It cannot stop a lid close, which sleeps regardless; startup reconciliation is what
+ * catches that.
+ */
+function keepAwake(busy) {
+  if (busy) awakeSeen = Date.now()
+  if (busy && awakeId === null) {
+    awakeId = powerSaveBlocker.start('prevent-app-suspension')
+  } else if (!busy && awakeId !== null) {
+    powerSaveBlocker.stop(awakeId)
+    awakeId = null
+  }
+}
+
+// The renderer heartbeats every 30s while it lives. If three of them go missing the window is
+// closed or the renderer is gone, and nothing will ever tell us the run ended — so let go rather
+// than keep the machine awake indefinitely.
+setInterval(() => {
+  if (awakeId !== null && Date.now() - awakeSeen > 90_000) keepAwake(false)
+}, 30_000)
 
 const PORT = 8787
 
@@ -141,6 +170,8 @@ app.whenReady().then(async () => {
   })
   ipcMain.handle('desktop:notify', (_, title, body) => new Notification({ title, body }).show())
   ipcMain.on('pulse:update', (_, state) => {
+    // Only a live run justifies holding the machine awake; a feature waiting on you does not.
+    keepAwake((state?.running ?? 0) > 0)
     if (!pulseWindow) return
     pulseWindow.webContents.send('pulse:state', state)
     // Show it only when there is something a person would switch back for.
@@ -170,7 +201,10 @@ app.whenReady().then(async () => {
 app.on('activate', () => {
   if (BrowserWindow.getAllWindows().length === 0) createWindow()
 })
-app.on('before-quit', () => engine?.kill())
+app.on('before-quit', () => {
+  keepAwake(false)
+  engine?.kill()
+})
 app.on('window-all-closed', () => {
   // macOS convention: the app stays alive with no windows. The engine sidecar stays with it, so
   // runs in flight are not killed by closing the window.

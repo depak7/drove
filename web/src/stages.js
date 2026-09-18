@@ -18,6 +18,7 @@ const AT = {
   verify_failed:     { at: 3, state: 'failed' },
   no_changes:        { at: 1, state: 'stopped' },
   failed:            { at: 1, state: 'failed' },
+  interrupted:       { at: 1, state: 'failed' },
   delivered:         { at: 5, state: 'done' },
   landed:            { at: 5, state: 'landed' },
   declined:          { at: 0, state: 'stopped' },
@@ -39,6 +40,7 @@ export const LABEL = {
   verify_failed:     ['bad',     'checks failed'],
   no_changes:        ['attn',    'no changes'],
   failed:            ['bad',     'failed'],
+  interrupted:       ['attn',    'interrupted'],
   delivered:         ['good',    'ready to merge'],
   landed:            ['neutral', 'landed'],
   abandoned:         ['neutral', 'abandoned'],
@@ -74,6 +76,10 @@ export const NEEDS_YOU = {
     why: "Your own project checks failed on the branch. The code was reviewed, but it does not pass.",
   },
   failed: { verb: 'Decide what to do', why: 'The run errored before it finished.' },
+  interrupted: {
+    verb: 'Resume it',
+    why: 'Drove was stopped before this finished — the app quit, the machine slept or shut down. Nothing is lost: work already committed is on the branch.',
+  },
   no_changes: { verb: 'Decide what to do', why: 'The agent made no changes. The request may already be satisfied, or it was too vague to act on.' },
 }
 

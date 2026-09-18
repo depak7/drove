@@ -51,6 +51,19 @@ the recovery command printed, per repo independently.
 name and have to be merged together — the evidence pack and the UI say so, but nothing can enforce
 it.
 
+## When it gets interrupted
+
+Runs are long, and laptops close. Drove holds a power assertion while agents are working, so the
+Mac will not fall asleep mid-run and kill the harness processes' connections — but a lid close
+sleeps regardless, and quitting or crashing is always possible.
+
+So on every start Drove looks for work that was in flight when it last stopped. Job state lives in
+memory, so a run whose owning process is gone is provably abandoned; those features are marked
+**interrupted**, with what they were doing recorded on the run, and offered a **Resume**. Commits
+already made are on the branch, and the executor session is still addressable, so resuming picks
+the work back up rather than starting over. A run owned by a live `drove execute` in a terminal is
+left alone.
+
 ## Browser checks (optional)
 
 Your tests prove the code is correct. They cannot tell you the page is blank because one component
