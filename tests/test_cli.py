@@ -9,8 +9,9 @@ from __future__ import annotations
 
 from typer.testing import CliRunner
 
-from drove import __version__
+from drove import __version__, db
 from drove.cli import app
+from drove.vcs import git, tree
 
 runner = CliRunner()
 
@@ -39,3 +40,36 @@ def test_run_rejects_unimplemented_stage(tmp_path):
 
 def test_init_refuses_non_git_directory(tmp_path):
     assert runner.invoke(app, ["init", str(tmp_path)]).exit_code == 1
+
+
+def test_reclaim_removes_a_merged_features_worktrees(duo):
+    trees = tree.create(duo, "task-1")
+    for worktree in trees:
+        (worktree.path / "feature.py").write_text("y = 2\n")
+        git.git(worktree.path, "add", "-A")
+        git.git(worktree.path, "commit", "-qm", f"change {worktree.repo.name}")
+        git.git(worktree.repo.path, "merge", "--no-edit", "-q", worktree.branch)
+    primary = trees.trees[0]
+    with db.connect() as conn:
+        db.create_feature(
+            conn,
+            primary.repo.path,
+            "merged feature",
+            trees.branch,
+            trees.root,
+            primary.base,
+            feature_id="task-1",
+            workspace_id=duo.id,
+        )
+        db.set_feature_status(conn, "task-1", "delivered")
+
+    preview = runner.invoke(app, ["reclaim", "--workspace", duo.id, "--dry-run"])
+    assert preview.exit_code == 0
+    assert "would reclaim" in preview.stdout
+    assert trees.root.exists()
+
+    result = runner.invoke(app, ["reclaim", "--workspace", duo.id])
+
+    assert result.exit_code == 0, result.stdout
+    assert "1 feature(s) reclaimed" in result.stdout
+    assert not trees.root.exists()

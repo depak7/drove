@@ -156,6 +156,7 @@ def test_a_tab_is_only_offered_when_there_is_something_behind_it(client):
 
     fresh = client.get(f"/api/features/{feature['id']}").json()["has"]
     assert fresh == {
+        "worktree": True,
         "plan": False, "log": False, "diff": False,
         "evidence": False, "browser": False, "review": False, "source": False,
     }

@@ -23,7 +23,7 @@ from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
-from drove import __version__, db
+from drove import __version__, db, landed
 from drove import workspace as ws_mod
 from drove.api import jobs
 from drove.api.bus import bus
@@ -148,6 +148,7 @@ def _available(row, runs) -> dict[str, bool]:
     # hid the diff and the source of exactly those runs, which are the ones worth looking at.
     has_work = any(r["head_sha"] for r in runs) or any(p.get("files_changed") for p in packs)
     return {
+        "worktree": Path(row["worktree_path"]).exists(),
         "plan": any(r["plan_json"] for r in runs),
         "log": bool(run_dir and run_dir.is_dir() and any(run_dir.glob("*.jsonl"))),
         # Something was committed, so there is a diff to read.
@@ -416,12 +417,16 @@ def _resume_command(harness: str, session_id: str, cwd: str) -> str | None:
 @api.get("/features")
 def list_features(workspace_id: str | None = None) -> list[dict[str, Any]]:
     with db.connect() as conn:
+        newly_landed = landed.reconcile(conn)
         rows = (
             db.features_in(conn, workspace_id)
             if workspace_id
             else db.list_features(conn)
         )
-        return [_feature_json(conn, row) for row in rows]
+        payload = [_feature_json(conn, row) for row in rows]
+    for row in newly_landed:
+        jobs.emit(row["id"], "status", status="landed")
+    return payload
 
 
 @api.post("/features")
@@ -499,6 +504,26 @@ def decline(feature_id: str) -> dict[str, Any]:
         # Per repo: one repo's work being merged is no reason to delete another's.
         "kept": {
             name: {"reason": r.reason, "recovery": r.recovery} for name, r in kept.items()
+        },
+    }
+
+
+@api.post("/features/{feature_id}/reclaim")
+def reclaim(feature_id: str) -> dict[str, Any]:
+    row, _ = _load(feature_id)
+    if row["status"] != "landed":
+        raise HTTPException(400, "only landed features can be reclaimed")
+    if jobs.is_busy(row["id"]):
+        raise HTTPException(409, "this feature is already running")
+
+    with db.connect() as conn:
+        results = landed.reclaim(conn, row)
+    kept = {name: result for name, result in results.items() if not result.removed}
+    return {
+        "removed": not kept,
+        "kept": {
+            name: {"reason": result.reason, "recovery": result.recovery}
+            for name, result in kept.items()
         },
     }
 
@@ -787,12 +812,18 @@ async def lifespan(app: FastAPI):
     # it before the UI can read the database, so nobody is ever shown a run that cannot progress.
     with db.connect() as conn:
         stranded = db.reconcile_interrupted(conn)
+        newly_landed = landed.reconcile(conn, force=True)
     if stranded:
         # warning, not info: nothing configures logging, so info would never reach the terminal —
         # and a previous run dying is exactly the thing you want said out loud on the next start.
         logging.getLogger("drove").warning(
             "%d feature(s) were interrupted when Drove last stopped and can be resumed: %s",
             len(stranded), ", ".join(f["title"] for f in stranded),
+        )
+    if newly_landed:
+        logging.getLogger("drove").warning(
+            "%d delivered feature(s) have landed: %s",
+            len(newly_landed), ", ".join(f["title"] for f in newly_landed),
         )
     yield
 

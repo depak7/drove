@@ -7,8 +7,15 @@ from pathlib import Path
 
 import pytest
 
-from drove import config, db, workspace
+from drove import config, db, landed, workspace
 from drove.vcs import git
+
+
+@pytest.fixture(autouse=True)
+def clear_landed_checks():
+    landed._checked.clear()
+    yield
+    landed._checked.clear()
 
 
 def make_repo(root: Path, name: str, default_branch: str = "main") -> Path:
