@@ -792,3 +792,29 @@ button.chain:hover { background: var(--surface-2); }
   display: block; width: 100%; border-radius: var(--radius-sm);
   border: 1px solid var(--line); background: #070505;
 }
+
+/* review tab */
+.card.indep.weak { border-color: #D9A44155; }
+.vs { display: flex; align-items: center; gap: 18px; flex-wrap: wrap; }
+.vs .side { display: grid; gap: 1px; }
+.vs .side b { font-size: 14px; }
+.vs .side em { font-style: normal; font-size: 11.5px; color: var(--text-3); }
+.vs .side .role { font-size: 10.5px; font-weight: 600; letter-spacing: .07em; text-transform: uppercase; color: var(--text-3); margin-top: 3px; }
+.vs .arrow { font-size: 11px; color: var(--accent); font-weight: 600; letter-spacing: .04em; text-transform: uppercase; }
+.fine { margin: 12px 0 0; font-size: 12.5px; color: var(--text-2); line-height: 1.6; }
+.fine.warnish { margin: 0; color: var(--warn); }
+
+.card.round.pass { border-left: 2px solid var(--ok); }
+.card.round.changes_requested { border-left: 2px solid var(--warn); }
+.round-head { display: flex; align-items: baseline; gap: 10px; }
+.round-head .n { font-size: 12px; font-weight: 650; }
+.round-head .verdict { font-size: 11px; font-weight: 600; }
+.round-head .verdict.pass { color: var(--ok); }
+.round-head .verdict.changes_requested { color: var(--warn); }
+.card.round .sum { margin: 8px 0 0; font-size: 13px; color: var(--text-2); line-height: 1.6; }
+.blocking { margin: 12px 0 0; padding: 0; list-style: none; display: grid; gap: 9px; }
+.blocking li { display: grid; grid-template-columns: auto auto 1fr; gap: 9px; align-items: baseline; font-size: 12.5px; line-height: 1.55; }
+.blocking code { font-family: var(--mono); font-size: 11.5px; color: var(--text-2); background: var(--surface-3); padding: 1px 6px; border-radius: 5px; white-space: nowrap; }
+.sev { font-size: 10px; font-weight: 700; letter-spacing: .05em; text-transform: uppercase; }
+.sev.critical, .sev.major { color: var(--bad); }
+.sev.minor { color: var(--text-3); }

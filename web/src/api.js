@@ -58,6 +58,7 @@ export const api = {
   evidence: (id) => get(`/api/features/${id}/evidence`),
   log: (id) => get(`/api/features/${id}/log`),
   browser: (id) => get(`/api/features/${id}/browser`),
+  review: (id) => get(`/api/features/${id}/review`),
   retry: (id) => post(`/api/features/${id}/retry`),
   create: (task, workspaceId) =>
     post('/api/features', { task, workspace_id: workspaceId }),

@@ -6,6 +6,8 @@ reviewed this" is the whole argument, so the document must not assert it when it
 
 from __future__ import annotations
 
+import json
+
 from drove import evidence
 from drove.pipeline.schemas import BlockingIssue, PlanDoc, ReviewVerdict
 from drove.pipeline.stages.verify import Check, VerifyOutcome
@@ -130,3 +132,24 @@ def test_the_json_carries_what_tooling_needs():
     assert doc["stages"]["review"]["lab"] == "OpenAI"
     assert doc["reviews"][0]["verdict"] == "pass"
     assert doc["verify"][0]["name"] == "test"
+
+
+def test_the_review_endpoint_serves_what_the_pack_says(tmp_path, monkeypatch):
+    """The app reads the run's own evidence rather than recomputing, so the two cannot drift."""
+    from drove import config
+
+    monkeypatch.setattr(config, "HOME", tmp_path)
+    doc = pack(
+        reviews=[
+            ReviewVerdict(verdict="changes_requested", summary="no",
+                          blocking=[BlockingIssue(file="a.py", line=3, severity="major", why="x")]),
+            ReviewVerdict(verdict="pass", summary="yes"),
+        ]
+    )
+    evidence.write(doc)
+
+    written = json.loads((evidence.runs_dir(doc.run_id) / "evidence.json").read_text())
+    assert written["independent_review"] is True
+    assert [r["verdict"] for r in written["reviews"]] == ["changes_requested", "pass"]
+    assert written["reviews"][0]["blocking"][0]["file"] == "a.py"
+    assert written["stages"]["execute"]["lab"] == "Anthropic"

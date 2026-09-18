@@ -147,6 +147,7 @@ def _available(row, runs) -> dict[str, bool]:
         "diff": any(r["head_sha"] for r in runs),
         "evidence": any((runs_dir(r["id"]) / "evidence.md").exists() for r in runs),
         "browser": any((runs_dir(r["id"]) / "screens").is_dir() for r in runs),
+        "review": any((runs_dir(r["id"]) / "evidence.json").exists() for r in runs),
     }
 
 
@@ -593,21 +594,42 @@ def _render_event(event: Any) -> dict[str, str] | None:
     return None
 
 
-@api.get("/features/{feature_id}/browser")
-def browser_results(feature_id: str) -> dict[str, Any]:
-    """What the app looked like when it was opened, from the run's evidence."""
-    _, payload = _load(feature_id)
+def _evidence_json(payload) -> tuple[str | None, dict[str, Any]]:
+    """The most recent run that produced a machine-readable pack."""
     for run in reversed(payload["runs"]):
         path = runs_dir(run["id"]) / "evidence.json"
         if not path.exists():
             continue
         try:
-            data = json.loads(path.read_text())
+            return run["id"], json.loads(path.read_text())
         except (OSError, json.JSONDecodeError):
             continue
-        if data.get("browser"):
-            return {"run_id": run["id"], "checks": data["browser"]}
-    return {"run_id": None, "checks": []}
+    return None, {}
+
+
+@api.get("/features/{feature_id}/review")
+def review_summary(feature_id: str) -> dict[str, Any]:
+    """Who judged the change, and what they said.
+
+    Served from the run's own evidence rather than recomputed, so what the app shows and what the
+    pack says can never drift apart.
+    """
+    _, payload = _load(feature_id)
+    run_id, data = _evidence_json(payload)
+    return {
+        "run_id": run_id,
+        "reviews": data.get("reviews", []),
+        "stages": data.get("stages", {}),
+        "independent": data.get("independent_review", False),
+    }
+
+
+@api.get("/features/{feature_id}/browser")
+def browser_results(feature_id: str) -> dict[str, Any]:
+    """What the app looked like when it was opened, from the run's evidence."""
+    _, payload = _load(feature_id)
+    run_id, data = _evidence_json(payload)
+    return {"run_id": run_id, "checks": data.get("browser", [])}
 
 
 @api.get("/features/{feature_id}/screens/{name}")

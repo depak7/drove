@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState } from 'react'
 import { api } from './api'
 import { useStream } from './useStream'
-import { BrowserChecks, Diff, Gate, Log, Pill, Plan, Rail, StageLegend } from './components'
+import { BrowserChecks, Diff, Gate, Log, Pill, Plan, Rail, Review, StageLegend } from './components'
 import { WorkspaceSheet } from './Workspaces'
 import { SettingsSheet } from './Settings'
 import { Mark, Wordmark } from './Logo'
@@ -30,6 +30,7 @@ export default function App() {
   const [evidence, setEvidence] = useState('')
   const [replay, setReplay] = useState(null)
   const [browser, setBrowser] = useState(null)
+  const [review, setReview] = useState(null)
   const [task, setTask] = useState('')
   const [error, setError] = useState('')
 
@@ -92,6 +93,7 @@ export default function App() {
     if (tab === 'evidence') api.evidence(current.id).then((d) => setEvidence(d.markdown)).catch(() => setEvidence(''))
     if (tab === 'live') api.log(current.id).then(setReplay).catch(() => setReplay(null))
     if (tab === 'browser') api.browser(current.id).then(setBrowser).catch(() => setBrowser(null))
+    if (tab === 'review') api.review(current.id).then(setReview).catch(() => setReview(null))
   }, [tab, current?.id, current?.status])
 
   const act = async (fn) => {
@@ -264,6 +266,9 @@ export default function App() {
             <Detail
               feature={current}
               logs={logs[current.id] ?? []}
+              replay={replay}
+              browser={browser}
+              review={review}
               connected={connected}
               tab={tab} setTab={setTab}
               diff={diff} evidence={evidence}
@@ -401,7 +406,8 @@ function FirstRun({ onCreate }) {
 }
 
 function Detail({
-  feature, logs, replay, browser, connected, tab, setTab, diff, evidence, onBack, act, onDiscard,
+  feature, logs, replay, browser, review, connected, tab, setTab, diff, evidence, onBack,
+  act, onDiscard,
 }) {
   const gated = feature.status === 'awaiting_approval'
   const stopped = !gated && Boolean(NEEDS_YOU[feature.status])
@@ -409,7 +415,7 @@ function Detail({
   // Only offer a tab when there is something behind it. An empty panel reads as broken; a tab
   // that is simply absent reads as "this run has not got there yet", which is the truth.
   const has = feature.has ?? {}
-  const tabs = ['plan', 'live', 'diff', 'browser', 'evidence'].filter((name) => {
+  const tabs = ['plan', 'live', 'diff', 'review', 'browser', 'evidence'].filter((name) => {
     if (name === 'plan') return Boolean(feature.plan)
     if (name === 'live') return logs.length > 0 || has.log
     return has[name]
@@ -473,6 +479,7 @@ function Detail({
       )}
       {tab === 'live' && <Log lines={logs} replay={replay} connected={connected} />}
       {tab === 'diff' && <Diff text={diff?.diff} repos={diff?.repos} />}
+      {tab === 'review' && <Review data={review} />}
       {tab === 'browser' && <BrowserChecks featureId={feature.id} data={browser} />}
       {tab === 'evidence' && <pre className="block">{evidence}</pre>}
     </div>

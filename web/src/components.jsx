@@ -273,3 +273,93 @@ export function BrowserChecks({ featureId, data }) {
     </>
   )
 }
+
+
+/**
+ * The review: who judged the change, and what they said.
+ *
+ * The independence line is the product's actual claim, so it is stated first and stated honestly —
+ * including when it does not hold, because one harness reviewing its own work is a materially
+ * weaker result and hiding that would make the whole pack untrustworthy.
+ */
+export function Review({ data }) {
+  const rounds = data?.reviews ?? []
+  if (!rounds.length) {
+    return <div className="card"><p style={{ color: 'var(--text-3)' }}>
+      Not reviewed yet. Review runs after the change is committed.
+    </p></div>
+  }
+
+  const who = (stage) => {
+    const s = data.stages?.[stage]
+    if (!s) return null
+    const detail = [s.lab, s.model].filter(Boolean).join(' · ')
+    return { harness: s.harness, detail }
+  }
+  const builder = who('execute')
+  const reviewer = who('review')
+
+  return (
+    <>
+      <div className={`card indep ${data.independent ? '' : 'weak'}`}>
+        {data.independent ? (
+          <>
+            <div className="vs">
+              <span className="side">
+                <b>{builder?.harness}</b>
+                <em>{builder?.detail}</em>
+                <span className="role">wrote it</span>
+              </span>
+              <span className="arrow">judged by</span>
+              <span className="side">
+                <b>{reviewer?.harness}</b>
+                <em>{reviewer?.detail}</em>
+                <span className="role">reviewed it</span>
+              </span>
+            </div>
+            <p className="fine">
+              A different tool from a different lab, given only the approved intent and the diff —
+              never the implementer's reasoning — in a fresh session each round.
+            </p>
+          </>
+        ) : (
+          <p className="fine warnish">
+            <b>{builder?.harness}</b> both wrote and reviewed this change. A model that has just
+            argued for an approach tends to accept it, so this verdict is weaker than an
+            independent one. Set a different harness for Review in Stages.
+          </p>
+        )}
+      </div>
+
+      {rounds.map((round, i) => (
+        <div className={`card round ${round.verdict}`} key={i}>
+          <div className="round-head">
+            <span className="n">Round {i + 1}</span>
+            <span className={`verdict ${round.verdict}`}>
+              {round.verdict === 'pass' ? 'passed' : 'changes requested'}
+            </span>
+          </div>
+          {round.summary && <p className="sum">{round.summary}</p>}
+          {round.blocking?.length > 0 && (
+            <ul className="blocking">
+              {round.blocking.map((issue, j) => (
+                <li key={j}>
+                  <code>{issue.file}{issue.line ? `:${issue.line}` : ''}</code>
+                  <span className={`sev ${issue.severity}`}>{issue.severity}</span>
+                  <span>{issue.why}</span>
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
+      ))}
+
+      {rounds.length > 1 && rounds[rounds.length - 1].verdict === 'pass' && (
+        <p className="fine" style={{ color: 'var(--text-3)' }}>
+          The issues raised in round {rounds.length - 1} were addressed, and a fresh reviewer —
+          with no memory of having raised them — passed the result.
+        </p>
+      )}
+    </>
+  )
+}
