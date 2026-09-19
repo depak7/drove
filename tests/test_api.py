@@ -439,3 +439,66 @@ def test_cancelling_keeps_a_commit_an_earlier_attempt_recorded(client):
     assert after["head_sha"] == "abc1234"
     assert after["status"] == "cancelled"
     assert "commits it had already made" in after["error"]
+
+
+# --- reading the code ---------------------------------------------------------------------------
+
+def changed_feature(client):
+    """A feature whose branch actually carries a commit, so there is something to read."""
+    from pathlib import Path
+
+    from drove.vcs import git as git_mod
+
+    ws = new_workspace(client)
+    feature = new_feature(client, ws, task="add a helper")
+    # Creating the feature already made the worktrees; the row records where they are.
+    checkout = next(Path(feature["worktree"]).iterdir())
+    (checkout / "lib.py").write_text("def helper():\n    return 1\n")
+    (checkout / "api.py").write_text("x = 2\ny = 3\n")   # the fixture repo already has api.py
+    git_mod.git(checkout, "add", "-A")
+    git_mod.git(checkout, "commit", "-qm", "work")
+    return feature
+
+
+def test_changes_lists_each_file_with_its_line_counts(client):
+    """The list a reviewer scans: one concatenated diff gives no sense of shape."""
+    feature = changed_feature(client)
+
+    body = client.get(f"/api/features/{feature['id']}/changes").json()
+
+    by_path = {f["path"]: f for f in body["files"]}
+    assert by_path["lib.py"]["status"] == "added"
+    assert by_path["lib.py"]["added"] == 2
+    assert by_path["lib.py"]["removed"] == 0
+    assert by_path["api.py"]["status"] == "modified"
+
+
+def test_a_blob_carries_both_the_file_and_its_diff(client):
+    feature = changed_feature(client)
+
+    body = client.get(f"/api/features/{feature['id']}/blob?path=lib.py").json()
+
+    assert "def helper()" in body["text"]
+    assert "+def helper():" in body["diff"]
+
+
+def test_browsing_lists_a_directory_without_the_noise(client):
+    feature = changed_feature(client)
+
+    names = [e["name"] for e in client.get(f"/api/features/{feature['id']}/tree").json()["entries"]]
+
+    assert "lib.py" in names
+    assert ".git" not in names  # a worktree's .git is a file, and it is never worth showing
+
+
+@pytest.mark.parametrize(
+    "path", ["../../../etc/passwd", "..", "lib.py/../../../../etc/hosts", "/etc/passwd"]
+)
+def test_a_path_outside_the_worktree_is_refused(client, path):
+    """The path comes from a query string. A localhost daemon is still a server."""
+    feature = changed_feature(client)
+
+    for endpoint in ("blob", "tree"):
+        response = client.get(f"/api/features/{feature['id']}/{endpoint}?path={path}")
+        assert response.status_code in (400, 404), f"{endpoint} accepted {path!r}"
+        assert "root:" not in response.text

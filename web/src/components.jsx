@@ -238,30 +238,110 @@ export function Log({ lines, replay, connected }) {
   )
 }
 
-export function Diff({ text, repos }) {
-  if (!text) return <div className="card"><p style={{ color: 'var(--text-3)' }}>No changes yet.</p></div>
+/** One line of a unified diff, classified for colour. */
+const META = ['+++', '---', 'diff ', 'index ', 'new file', 'deleted file', 'old mode', 'new mode']
+
+function diffClass(line) {
+  if (META.some((prefix) => line.startsWith(prefix))) return 'meta'
+  if (line.startsWith('@@')) return 'hunk'
+  if (line.startsWith('+')) return 'add'
+  if (line.startsWith('-')) return 'del'
+  return ''
+}
+
+/** A unified diff with line numbers down both sides, the way a review tool shows it. */
+export function Hunks({ text }) {
+  if (!text?.trim()) return <p className="dim">No textual changes.</p>
+  let before = 0
+  let after = 0
+  return (
+    <pre className="block diff numbered">
+      {text.split('\n').map((line, i) => {
+        const cls = diffClass(line)
+        if (cls === 'hunk') {
+          const m = line.match(/@@ -(\d+)(?:,\d+)? \+(\d+)(?:,\d+)? @@/)
+          if (m) { before = Number(m[1]); after = Number(m[2]) }
+          return <div className="hunk" key={i}><i /><i />{line}</div>
+        }
+        if (cls === 'meta') return <div className="meta" key={i}><i /><i />{line}</div>
+        const l = cls === 'add' ? null : before++
+        const r = cls === 'del' ? null : after++
+        return (
+          <div className={cls} key={i}>
+            <i>{l ?? ''}</i><i>{r ?? ''}</i>{line || ' '}
+          </div>
+        )
+      })}
+    </pre>
+  )
+}
+
+/**
+ * The diff, one file at a time.
+ *
+ * A single concatenated blob is unreadable past a few hundred lines and gives no sense of shape:
+ * you cannot see how many files moved, which ones are big, or jump to the one you care about.
+ * The list answers that first, and the content follows the selection.
+ */
+export function Diff({ files, repos, note, selected, onSelect, blob }) {
+  if (note) return <div className="card"><p className="dim">{note}</p></div>
+  if (!files?.length) {
+    return <div className="card"><p style={{ color: 'var(--text-3)' }}>No changes yet.</p></div>
+  }
+  const multi = (repos?.length ?? 0) > 1
   return (
     <>
-      {repos?.length > 1 && (
+      {multi && (
         <div className="banner warn" style={{ borderRadius: 'var(--radius)', marginBottom: 12, border: '1px solid #E8B33940' }}>
           This change spans {repos.length} repositories. Their branches must be merged together —
           landing one without the others breaks things.
         </div>
       )}
-      <pre className="block diff">
-        {text.split('\n').map((line, i) => {
-          if (line.startsWith('===== repo:')) {
-            return <span className="repo" key={i}>{line.replace(/=====/g, '').trim()}</span>
-          }
-          const cls = line.startsWith('+++') || line.startsWith('---') || line.startsWith('diff ')
-            ? 'meta'
-            : line.startsWith('@@') ? 'hunk'
-            : line.startsWith('+') ? 'add'
-            : line.startsWith('-') ? 'del'
-            : ''
-          return <div className={cls} key={i}>{line || ' '}</div>
-        })}
-      </pre>
+      <div className="split">
+        <div className="filelist">
+          <div className="eyebrow">{files.length} file{files.length === 1 ? '' : 's'}</div>
+          {files.map((f) => {
+            const key = `${f.repo}:${f.path}`
+            const name = f.path.split('/').pop()
+            const dir = f.path.slice(0, f.path.length - name.length)
+            return (
+              <button
+                key={key}
+                className={`fileitem ${selected === key ? 'on' : ''}`}
+                onClick={() => onSelect(f)}
+                title={f.path}
+              >
+                <span className={`dot ${f.status}`} />
+                <span className="fname">
+                  {multi && <em>{f.repo}/</em>}
+                  <span className="fdir">{dir}</span>{name}
+                </span>
+                {f.binary ? (
+                  <span className="counts dim">bin</span>
+                ) : (
+                  <span className="counts">
+                    <b className="add">+{f.added}</b> <b className="del">−{f.removed}</b>
+                  </span>
+                )}
+              </button>
+            )
+          })}
+        </div>
+        <div className="fileview">
+          {blob ? (
+            <>
+              <div className="fileview-head">
+                <b className="mono">{blob.path}</b>
+                <span className="grow" />
+                <span className="dim">{blob.repo}</span>
+              </div>
+              <Hunks text={blob.diff} />
+            </>
+          ) : (
+            <p className="dim pad">Pick a file to see what changed in it.</p>
+          )}
+        </div>
+      </div>
     </>
   )
 }

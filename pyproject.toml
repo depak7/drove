@@ -14,6 +14,8 @@ dependencies = [
     "pydantic>=2.7",
     "fastapi>=0.111",
     "uvicorn>=0.30",
+    # The in-app terminal is a WebSocket; uvicorn speaks one only when this is installed.
+    "websockets>=12.0",
 ]
 
 [project.optional-dependencies]

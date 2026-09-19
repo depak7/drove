@@ -76,6 +76,21 @@ push   = false
 remote = "origin"
 ```
 
+## Reading the code, and getting your hands on it
+
+A run's **diff** tab lists every changed file with its line counts and shows one file at a time,
+with line numbers down both sides — the shape of a change is the first thing you need, and a
+single concatenated diff hides it.
+
+**code** browses the whole worktree, so you can read the file a change lives in rather than only
+the lines that moved. A file the feature touched opens on its diff, with a toggle to the full text.
+
+**terminal** is a real shell in that worktree. Agents work in a checkout you did not make, and
+sometimes the fastest thing is to run the tests yourself or fix one line by hand — having to leave
+the app to do that is what stops people trusting it. The pty lives in the daemon rather than in
+Electron, so it works the same in a browser and in the packaged app. It is your shell with your
+permissions, reachable only from loopback.
+
 ## Stopping a run
 
 **Stop** on a running feature ends it wherever it is running — this app, or a `drove execute` in a

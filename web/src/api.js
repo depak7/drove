@@ -60,6 +60,13 @@ export const api = {
   browser: (id) => get(`/api/features/${id}/browser`),
   review: (id) => get(`/api/features/${id}/review`),
   source: (id) => get(`/api/features/${id}/source`),
+  changes: (id) => get(`/api/features/${id}/changes`),
+  blob: (id, path, repo) =>
+    get(`/api/features/${id}/blob?path=${encodeURIComponent(path)}` +
+        (repo ? `&repo=${encodeURIComponent(repo)}` : '')),
+  tree: (id, path = '', repo) =>
+    get(`/api/features/${id}/tree?path=${encodeURIComponent(path)}` +
+        (repo ? `&repo=${encodeURIComponent(repo)}` : '')),
   push: (id) => post(`/api/features/${id}/push`),
   retry: (id) => post(`/api/features/${id}/retry`),
   cancel: (id) => post(`/api/features/${id}/cancel`),

@@ -8,6 +8,7 @@ import { WorkspaceSheet } from './Workspaces'
 import { SettingsSheet } from './Settings'
 import { Mark, Wordmark } from './Logo'
 import { PipelineStrip } from './Pipeline'
+import { Code, Terminal } from './Code'
 import { Board } from './Board'
 import { NEEDS_YOU, needsYou } from './stages'
 import { Agents, Blank, Runs } from './Agents'
@@ -28,12 +29,14 @@ export default function App() {
   const [agents, setAgents] = useState([])
   const [settings, setSettings] = useState(false)
   const [tab, setTab] = useState('plan')
-  const [diff, setDiff] = useState(null)
   const [evidence, setEvidence] = useState(null)
   const [replay, setReplay] = useState(null)
   const [browser, setBrowser] = useState(null)
   const [review, setReview] = useState(null)
   const [source, setSource] = useState(null)
+  const [changes, setChanges] = useState(null)
+  const [picked, setPicked] = useState(null)
+  const [blob, setBlob] = useState(null)
   const [task, setTask] = useState('')
   const [error, setError] = useState('')
 
@@ -60,7 +63,11 @@ export default function App() {
   const { connected, logs } = useStream(
     useCallback((event) => {
       refresh()
-      if (event.kind !== 'status') return
+      // The `ready` handshake calls this with nothing to say — it only means "reload now", which
+      // refresh() above has already done. Reading a field off it threw once per connect; the
+      // reload itself was fine, having already run, so the cost was a console error rather than
+      // a broken startup.
+      if (event?.kind !== 'status') return
       // The point of a desktop app is not having to watch it. Interrupt only for the two states
       // that actually need a person.
       if (event.status === 'awaiting_approval') {
@@ -96,9 +103,11 @@ export default function App() {
     return () => clearInterval(timer)
   }, [features])
 
+  useEffect(() => { setPicked(null); setBlob(null) }, [current?.id])
+
   useEffect(() => {
     if (!current) return
-    if (tab === 'diff') api.diff(current.id).then(setDiff).catch(() => setDiff(null))
+    if (tab === 'diff') api.changes(current.id).then(setChanges).catch(() => setChanges(null))
     if (tab === 'evidence') api.evidence(current.id).then(setEvidence).catch(() => setEvidence(null))
     if (tab === 'live') api.log(current.id).then(setReplay).catch(() => setReplay(null))
     if (tab === 'browser') api.browser(current.id).then(setBrowser).catch(() => setBrowser(null))
@@ -283,7 +292,13 @@ export default function App() {
               review={review}
               connected={connected}
               tab={tab} setTab={setTab} source={source} onSource={setSource}
-              diff={diff} evidence={evidence}
+              changes={changes} picked={picked} blob={blob}
+              onPick={(f) => {
+                setPicked(`${f.repo}:${f.path}`)
+                setBlob(null)
+                api.blob(current.id, f.path, f.repo).then(setBlob).catch(() => setBlob(null))
+              }}
+              evidence={evidence}
               onBack={() => setSelected(null)}
               act={act}
               onDiscard={() => setSelected(null)}
@@ -418,8 +433,8 @@ function FirstRun({ onCreate }) {
 }
 
 function Detail({
-  feature, logs, replay, browser, review, source, onSource, connected, tab, setTab, diff, evidence,
-  onBack,
+  feature, logs, replay, browser, review, source, onSource, connected, tab, setTab, evidence,
+  changes, picked, blob, onPick, onBack,
   act, onDiscard,
 }) {
   const gated = feature.status === 'awaiting_approval'
@@ -428,11 +443,14 @@ function Detail({
   // Only offer a tab when there is something behind it. An empty panel reads as broken; a tab
   // that is simply absent reads as "this run has not got there yet", which is the truth.
   const has = feature.has ?? {}
-  const tabs = ['plan', 'live', 'diff', 'source', 'review', 'browser', 'evidence'].filter((name) => {
-    if (name === 'plan') return Boolean(feature.plan)
-    if (name === 'live') return logs.length > 0 || has.log
-    return has[name]
-  })
+  const tabs = ['plan', 'live', 'diff', 'code', 'terminal', 'source', 'review', 'browser', 'evidence']
+    .filter((name) => {
+      if (name === 'plan') return Boolean(feature.plan)
+      if (name === 'live') return logs.length > 0 || has.log
+      // Reading the code and opening a shell need a checkout, not a finished run.
+      if (name === 'code' || name === 'terminal') return Boolean(has.worktree)
+      return has[name]
+    })
 
   useEffect(() => {
     if (tabs.length && !tabs.includes(tab)) setTab(tabs[0])
@@ -499,7 +517,18 @@ function Detail({
         </>
       )}
       {tab === 'live' && <Log lines={logs} replay={replay} connected={connected} />}
-      {tab === 'diff' && <Diff text={diff?.diff} repos={diff?.repos} />}
+      {tab === 'diff' && (
+        <Diff
+          files={changes?.files}
+          repos={changes?.repos}
+          note={changes?.note}
+          selected={picked}
+          onSelect={onPick}
+          blob={blob}
+        />
+      )}
+      {tab === 'code' && <Code featureId={feature.id} />}
+      {tab === 'terminal' && <Terminal featureId={feature.id} />}
       {tab === 'source' && (
         <Source
           data={source}

@@ -18,14 +18,14 @@ from importlib import resources
 from pathlib import Path
 from typing import Any
 
-from fastapi import APIRouter, FastAPI, HTTPException
+from fastapi import APIRouter, FastAPI, HTTPException, WebSocket
 from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 from drove import __version__, db, landed
 from drove import workspace as ws_mod
-from drove.api import jobs
+from drove.api import jobs, terminal
 from drove.api.bus import bus
 from drove.config import provisional_title, runs_dir
 from drove.harness import registry
@@ -602,6 +602,111 @@ def diff(feature_id: str) -> dict[str, Any]:
             for t in trees_mod.touched(trees)
         ],
     }
+
+
+MAX_BLOB_BYTES = 800_000
+
+
+def _tree_named(trees, repo: str | None):
+    """The repo the request means — the only one, when a workspace has one."""
+    found = trees.by_name(repo) if repo else (trees.trees[0] if len(trees) else None)
+    if found is None:
+        raise HTTPException(404, f"no repository {repo!r} in this feature")
+    return found
+
+
+def _inside(root: Path, relative: str) -> Path:
+    """Resolve a path the browser asked for, refusing anything outside the worktree.
+
+    The path arrives in a query string, so `../../.ssh/id_rsa` is a thing someone can type. A
+    localhost daemon is still a server, and this is the only place it reads an arbitrary path.
+    """
+    base = root.resolve()
+    target = (base / relative).resolve()
+    if target != base and base not in target.parents:
+        raise HTTPException(400, "path is outside the worktree")
+    return target
+
+
+@api.get("/features/{feature_id}/changes")
+def changes(feature_id: str) -> dict[str, Any]:
+    """Every changed file with its line counts — the list a reviewer scans before reading."""
+    row, _ = _load(feature_id)
+    if not Path(row["worktree_path"]).exists():
+        return {"files": [], "note": "worktrees no longer on disk"}
+    trees = _trees_for(row)
+    return {
+        "files": [asdict(change) for change in trees_mod.changes(trees)],
+        "repos": [t.repo.name for t in trees_mod.touched(trees)],
+    }
+
+
+@api.get("/features/{feature_id}/blob")
+def blob(feature_id: str, path: str, repo: str | None = None) -> dict[str, Any]:
+    """One file: its current text, and its diff when the feature changed it."""
+    row, _ = _load(feature_id)
+    if not Path(row["worktree_path"]).exists():
+        raise HTTPException(404, "worktrees no longer on disk")
+    tree = _tree_named(_trees_for(row), repo)
+    target = _inside(tree.path, path)
+
+    text, note = "", None
+    if target.is_file():
+        if target.stat().st_size > MAX_BLOB_BYTES:
+            note = f"file is larger than {MAX_BLOB_BYTES // 1000} KB and is not shown"
+        else:
+            try:
+                text = target.read_text(encoding="utf-8")
+            except (OSError, UnicodeDecodeError):
+                note = "not a text file"
+    elif not (diff := trees_mod.file_diff(tree, path)) or not diff.strip():
+        raise HTTPException(404, f"no such file: {path}")
+
+    return {
+        "repo": tree.repo.name,
+        "path": path,
+        "text": text,
+        "note": note,
+        "diff": trees_mod.file_diff(tree, path),
+    }
+
+
+@api.get("/features/{feature_id}/tree")
+def browse(feature_id: str, path: str = "", repo: str | None = None) -> dict[str, Any]:
+    """One directory of the worktree, so the code can be read without leaving the app."""
+    row, _ = _load(feature_id)
+    if not Path(row["worktree_path"]).exists():
+        raise HTTPException(404, "worktrees no longer on disk")
+    tree = _tree_named(_trees_for(row), repo)
+    target = _inside(tree.path, path)
+    if not target.is_dir():
+        raise HTTPException(404, f"no such directory: {path}")
+
+    entries = []
+    for child in sorted(target.iterdir(), key=lambda c: (c.is_file(), c.name.lower())):
+        if child.name in (".git", "__pycache__", "node_modules", ".drove"):
+            continue
+        entries.append({
+            "name": child.name,
+            "path": str(Path(path) / child.name) if path else child.name,
+            "dir": child.is_dir(),
+        })
+    return {"repo": tree.repo.name, "path": path, "entries": entries}
+
+
+@api.websocket("/features/{feature_id}/terminal")
+async def terminal_socket(socket: WebSocket, feature_id: str) -> None:
+    """A shell in the feature's worktree, for the things a person wants to do by hand."""
+    with db.connect() as conn:
+        row = db.get_feature(conn, feature_id)
+    worktree = Path(row["worktree_path"]) if row else None
+    if row is None or worktree is None or not worktree.is_dir():
+        await socket.close(code=1008, reason="no worktree for this feature")
+        return
+    # One repo's checkout rather than the feature root, when there is only one: that is where
+    # `git status` and the project's own commands mean something.
+    children = [child for child in worktree.iterdir() if (child / ".git").exists()]
+    await terminal.serve(socket, children[0] if len(children) == 1 else worktree)
 
 
 @api.get("/features/{feature_id}/log")

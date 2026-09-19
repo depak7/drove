@@ -341,3 +341,65 @@ def _teardown_one(tree: Tree, force: bool) -> Teardown:
 def prune(workspace: Workspace) -> None:
     for repo in workspace.repos:
         git.git(repo.path, "worktree", "prune", check=False)
+
+
+@dataclass(frozen=True)
+class FileChange:
+    """One changed file, as a reviewer scans it: what happened and how much."""
+
+    repo: str
+    path: str
+    status: str          # added | modified | deleted
+    added: int
+    removed: int
+    binary: bool
+
+
+_STATUS = {"A": "added", "D": "deleted", "M": "modified", "T": "modified"}
+
+
+def changes(trees: FeatureTrees) -> list[FileChange]:
+    """Every changed file across the feature, with its line counts.
+
+    `--no-renames` on purpose: a rename rendered as one entry hides the content that moved, and a
+    reviewer reading a diff wants to see both sides. Delete-plus-add is the honest shape.
+    """
+    out: list[FileChange] = []
+    for tree in touched(trees):
+        span = f"{tree.base}...HEAD"
+        counts: dict[str, tuple[int, int, bool]] = {}
+        for line in git.git(tree.path, "diff", "--numstat", "--no-renames", span,
+                            check=False).splitlines():
+            added, _, rest = line.partition("\t")
+            removed, _, path = rest.partition("\t")
+            if not path:
+                continue
+            binary = added == "-" or removed == "-"
+            counts[path] = (
+                0 if binary else int(added or 0),
+                0 if binary else int(removed or 0),
+                binary,
+            )
+        for line in git.git(tree.path, "diff", "--name-status", "--no-renames", span,
+                            check=False).splitlines():
+            code, _, path = line.partition("\t")
+            if not path:
+                continue
+            a, r, binary = counts.get(path, (0, 0, False))
+            out.append(
+                FileChange(
+                    repo=tree.repo.name,
+                    path=path,
+                    status=_STATUS.get(code[:1], "modified"),
+                    added=a,
+                    removed=r,
+                    binary=binary,
+                )
+            )
+    return out
+
+
+def file_diff(tree: Tree, path: str) -> str:
+    """The diff for a single file, so the UI never has to split a combined one."""
+    return git.git(tree.path, "diff", "--no-renames", f"{tree.base}...HEAD", "--", path,
+                   check=False)
