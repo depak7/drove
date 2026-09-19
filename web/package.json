@@ -8,7 +8,7 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "build": "vite build",
+    "build": "NODE_ENV=production vite build",
     "preview": "vite preview",
     "desktop:dev": "electron-vite dev",
     "desktop:sidecar": "cd .. && uv run --extra desktop pyinstaller --noconfirm --clean --onedir --name drove-sidecar --collect-all drove --exclude-module playwright --distpath web/sidecar-dist --workpath web/.pyinstaller/work --specpath web/.pyinstaller/spec desktop/sidecar.py",
