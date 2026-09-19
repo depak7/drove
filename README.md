@@ -1,7 +1,8 @@
 # Drove
 
-A local autonomous engineering pipeline. Describe a feature, approve one plan, and come back to a
-reviewed branch, a pushed compare link and an evidence pack you could hand to a colleague.
+A local engineering pipeline for people who want to delegate code without delegating judgment.
+Describe a feature, approve one plan, then come back to an isolated, reviewed branch, a pushed
+compare link, and evidence you can inspect before merging.
 
 It runs entirely on the coding CLIs you already have installed and logged in — `claude`, `codex`,
 `opencode`. No API keys, no cloud service, no second subscription. Nothing about your code leaves
@@ -14,13 +15,12 @@ claude                     claude   ⇄  codex     your cmds  branch + link + ev
                                    ≤2 fix rounds
 ```
 
-The point is **cross-model review**: the harness that wrote the code never grades its own
-homework. A reviewer that has read the implementer's reasoning tends to ratify it, so the reviewer
-runs in a fresh session every round and sees only what a human reviewer sees — the diff and the
-stated intent.
+The point is **independent review**: the harness that wrote the code never grades its own
+homework. The reviewer starts fresh and sees what a human reviewer should see: the diff and the
+stated intent, not the implementer's private reasoning.
 
 **Contents** · [Requirements](#requirements) · [Install](#install) · [Quickstart](#quickstart) ·
-[What people build](#what-people-point-it-at) · [How it works](#how-it-works) · [The app](#the-app) · [Feature states](#feature-states) ·
+[How it works](#how-it-works) · [The app](#the-app) · [Feature states](#feature-states) ·
 [Verifying](#verifying-your-own-checks) · [Publishing](#publishing) ·
 [Stopping and recovery](#stopping-and-recovery) · [Evidence](#the-evidence-pack) ·
 [Configuration](#configuration) · [CLI](#cli-reference) · [Where state lives](#where-state-lives) ·
@@ -101,35 +101,6 @@ cd ~/code/api && drove init     # writes .drove.toml; the only command that need
 Then fill in `[verify]`. See [Configuration](#configuration).
 
 ---
-
-## What people point it at
-
-Drove is at its best on work that is **well-specified but tedious** — where you know what "done"
-looks like, and the cost is the hour of typing rather than the thinking.
-
-| | Say something like |
-|---|---|
-| **Cross-repo changes** | *"rename `greeting()` to `salutation()` in api and update every caller in web"* — one workspace, two worktrees, one branch name in both |
-| **Test coverage** | *"the payment module has no tests for refunds; add them"* — the reviewer is a second model, so it will not wave through tests that assert nothing |
-| **Bug fixes from a trace** | paste the stack trace. *"this fires when the session cookie expires mid-request"* |
-| **Migrations you keep putting off** | *"move every `datetime.utcnow()` to timezone-aware `datetime.now(UTC)`"* |
-| **Dependency bumps that need fixing up** | *"upgrade to pydantic v2 and fix what breaks"* — `[verify]` runs your test suite before it calls that delivered |
-| **The frontend bug your tests cannot see** | a `[browser]` section opens the page after the run and screenshots it; a component that throws on render is caught even though the build passed |
-| **Chores nobody schedules** | *"every public function in `drove/vcs/` needs a docstring saying why, not what"* |
-
-And where it is **not** the right tool: anything whose hard part is deciding *what* to build.
-It plans, but you approve the plan — if you cannot tell whether the plan is right, nothing
-downstream will save you.
-
-### Two patterns worth knowing
-
-**File several, approve later.** The gate is a state, not a prompt. Queue up five features in the
-morning, approve the plans over coffee, and come back to five reviewed branches. Runs are bounded
-by a semaphore, so they do not all fight for the same rate limit.
-
-**Pivot instead of re-filing.** `drove pivot <feature> "use a token bucket instead"` keeps the
-branch and resumes the executor, which still remembers what it already tried and rejected. A fresh
-feature would start from nothing and often rediscover the same dead end.
 
 ---
 
@@ -450,15 +421,6 @@ runs lint and the offline suite on every push and pull request.
   defers a run because of it.
 - **`cursor-agent` is detected but has no adapter.**
 - **The DMG is unsigned**, as above.
-
-## The landing page
-
-`docs/index.html` is a single self-contained file — no build step, no dependencies, no external
-requests. Host it on GitHub Pages by pointing **Settings → Pages** at the `main` branch and the
-`/docs` folder, or drop the file on any static host.
-
-It shares the app's palette and mark, so the page and the product look like the same thing. If
-you change the accent colour in `web/src/styles.css`, change it there too.
 
 ## Licence
 

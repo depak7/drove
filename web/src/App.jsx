@@ -408,14 +408,14 @@ function FirstRun({ onCreate }) {
     <div className="stage-inner">
       <div className="hero">
         <Mark size={40} />
-        <h1 style={{ marginTop: 18 }}>Name your first workspace</h1>
+        <h1 style={{ marginTop: 18 }}>Start with a workspace</h1>
         <p className="sub">
-          A workspace is the set of repositories a feature may change. Most have one; add several
-          when a change spans an API and the things that call it.
+          A workspace groups the existing Git repositories Drove may change. Name it now, then add
+          a repository and approve the first plan when you are ready.
         </p>
         <div className="prompt">
           <input
-            autoFocus placeholder="product" value={name}
+            autoFocus placeholder="my product" value={name}
             onChange={(e) => setName(e.target.value)}
             onKeyDown={(e) => { if (e.key === 'Enter' && name.trim()) onCreate(name.trim()) }}
             style={{ background: 'transparent', border: 'none', fontSize: 15, padding: 0 }}
