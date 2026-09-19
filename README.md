@@ -47,10 +47,7 @@ stated intent.
 
 ```bash
 uv tool install git+https://github.com/depak7/drove
-
-cd ~/my-repo
-drove init        # writes .drove.toml
-drove doctor      # which CLIs are present, authenticated and adapter-backed
+drove doctor        # which CLIs are present, authenticated and adapter-backed
 ```
 
 With optional browser checks:
@@ -63,13 +60,18 @@ playwright install chromium
 ## Quickstart
 
 ```bash
-drove serve       # daemon + web UI on http://localhost:8787
+drove serve         # http://localhost:8787
 ```
+
+That is the whole setup. **Run it from anywhere** — your home directory, a scratch folder, a
+launchd job. Drove is one machine-wide daemon, not a per-project tool: it keeps its state in
+`~/.drove`, and repositories are pointed at rather than run from. You never `cd` into a project
+to start it, and you never run a second copy for a second repo.
 
 Add a workspace and a repo from the app, type what you want in the middle of the screen, and
 approve the plan when it appears. Everything after that runs unattended until it needs you again.
 
-The same thing from a terminal:
+The same thing from a terminal, also from anywhere:
 
 ```bash
 drove workspace new product ~/code/api ~/code/web
@@ -82,6 +84,21 @@ The web UI and the CLI are two clients of the same engine and the same SQLite da
 feature in one and finish it in the other. What the daemon adds is that the approval gate becomes
 a *state* rather than a blocking prompt, so several features can sit waiting on you at once while
 others run.
+
+### Optional: teach a repo about itself
+
+Nothing above requires configuring a project. A repo with no `.drove.toml` works — the base branch
+falls back to whatever it is currently on, and nothing is verified because you have not said what
+verifying means.
+
+To have Drove run your build and tests before calling a change delivered, do this once, inside the
+repository:
+
+```bash
+cd ~/code/api && drove init     # writes .drove.toml; the only command that needs a repo
+```
+
+Then fill in `[verify]`. See [Configuration](#configuration).
 
 ---
 
@@ -323,6 +340,9 @@ silently breaks when a provider retires one.
 | `drove version` | print the version |
 
 A `<feature>` is an id, an id prefix, or a branch name — whichever you have to hand.
+
+Every command except `drove init` runs from anywhere; they talk to the one daemon and the one
+database in `~/.drove`, not to the directory you happen to be standing in.
 
 ## Where state lives
 
