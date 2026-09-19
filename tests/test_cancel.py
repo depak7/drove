@@ -118,7 +118,7 @@ def test_cancel_when_nothing_is_running_is_a_conflict(client):
     response = client.post(f"/api/features/{feature['id']}/cancel")
 
     assert response.status_code == 409
-    assert "not running" in response.json()["detail"]
+    assert "nothing is running" in response.json()["detail"]
 
 
 def test_a_cancelled_feature_with_a_plan_retries_the_cycle(client, monkeypatch):
@@ -215,3 +215,47 @@ async def test_cancelling_async_verify_kills_the_check_process(tmp_path, monkeyp
     await asyncio.sleep(0.1)  # let the worker observe the stop event after communicate() returns
     assert not later_command.exists()
     assert not later_repo.exists()
+
+
+# --- reaching a run in another process -----------------------------------------------------
+
+def test_a_run_owned_by_another_process_is_asked_to_stop(client, monkeypatch):
+    """`drove execute` in a terminal is invisible to the daemon's job table but still reachable.
+
+    Not by signalling it: a CLI streaming a harness ignores SIGINT to its pid and to its process
+    group alike, and runs to completion. The request is recorded and the owner acts on it.
+    """
+    feature = approved_feature(client)
+    with db.connect() as conn:
+        run = db.latest_run(conn, feature["id"])
+        conn.execute("UPDATE runs SET owner_pid = ? WHERE id = ?", (999_001, run["id"]))
+    monkeypatch.setattr(db, "process_alive", lambda pid: pid == 999_001)
+
+    assert client.post(f"/api/features/{feature['id']}/cancel").status_code == 200
+    assert db.cancel_requested(run["id"]) is True
+
+
+def test_a_run_whose_owner_is_gone_is_not_cancellable(client, monkeypatch):
+    """Nothing is running, so there is nothing to stop — the startup sweep retires it instead."""
+    feature = approved_feature(client)
+    with db.connect() as conn:
+        run = db.latest_run(conn, feature["id"])
+        conn.execute("UPDATE runs SET owner_pid = ? WHERE id = ?", (999_002, run["id"]))
+    monkeypatch.setattr(db, "process_alive", lambda pid: False)
+
+    assert client.post(f"/api/features/{feature['id']}/cancel").status_code == 409
+    assert db.cancel_requested(run["id"]) is False
+
+
+def test_starting_a_run_clears_a_request_meant_for_an_earlier_attempt(client):
+    """Otherwise a retry stops the instant it first looks at the flag."""
+    feature = approved_feature(client)
+    with db.connect() as conn:
+        run = db.latest_run(conn, feature["id"])
+        db.request_cancel(conn, run["id"])
+    assert db.cancel_requested(run["id"]) is True
+
+    with db.connect() as conn:
+        db.claim_run(conn, run["id"])
+
+    assert db.cancel_requested(run["id"]) is False

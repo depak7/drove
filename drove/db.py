@@ -13,6 +13,7 @@ from __future__ import annotations
 import json
 import os
 import sqlite3
+import subprocess
 import time
 import uuid
 from collections.abc import Callable, Iterator
@@ -238,8 +239,15 @@ STOPPED_DURING = {
 
 
 def claim_run(conn: sqlite3.Connection, run_id: str) -> None:
-    """Record this process as the owner, so an abandoned run can be told from a live one."""
-    conn.execute("UPDATE runs SET owner_pid = ? WHERE id = ?", (os.getpid(), run_id))
+    """Record this process as the owner, so an abandoned run can be told from a live one.
+
+    Clears any pending cancel request: it was aimed at an earlier attempt, and leaving it set
+    would stop this one the moment it first looked.
+    """
+    conn.execute(
+        "UPDATE runs SET owner_pid = ?, cancel_requested = NULL WHERE id = ?",
+        (os.getpid(), run_id),
+    )
 
 
 def _alive(pid: int | None) -> bool:
@@ -252,6 +260,67 @@ def _alive(pid: int | None) -> bool:
     except PermissionError:
         return True  # exists, just not ours to signal
     return True
+
+
+def process_alive(pid: int | None) -> bool:
+    """Whether a recorded owner is still running."""
+    return _alive(pid)
+
+
+def is_drove_process(pid: int | None) -> bool:
+    """Whether `pid` looks like a drove process, before we send it anything.
+
+    Pids are reused. Signalling one purely because a row names it risks interrupting whatever
+    happens to hold that number now, so the command line has to agree before we act on it.
+    """
+    if not pid:
+        return False
+    proc = subprocess.run(
+        ["ps", "-p", str(pid), "-o", "command="], capture_output=True, text=True
+    )
+    return proc.returncode == 0 and "drove" in proc.stdout.lower()
+
+
+def request_cancel(conn: sqlite3.Connection, run_id: str) -> None:
+    """Ask whoever owns this run to stop, without being able to reach into their process."""
+    conn.execute("UPDATE runs SET cancel_requested = ? WHERE id = ?", (time.time(), run_id))
+
+
+def cancel_requested(run_id: str) -> bool:
+    """Whether someone has asked for this run to stop. Polled by the process that owns it.
+
+    Opens its own connection: the caller is mid-run and holds no transaction, and the answer has
+    to come from what another process has since written, not from a stale snapshot.
+    """
+    with connect() as conn:
+        row = conn.execute(
+            "SELECT cancel_requested FROM runs WHERE id = ?", (run_id,)
+        ).fetchone()
+    return bool(row and row["cancel_requested"])
+
+
+def cancel_run(conn: sqlite3.Connection, feature_id: str) -> str:
+    """Record that a person stopped this, in terms true of the stage it stopped in.
+
+    Shared by the daemon and by Ctrl-C in `drove execute`, because both are the same event and
+    the wording, the status and the preserved head_sha should not depend on which one it was.
+    """
+    feature = get_feature(conn, feature_id)
+    status = feature["status"] if feature is not None else ""
+    reason = f"You stopped this {STOPPED_DURING.get(status, 'mid-run')}."
+    if status not in ("planning", "approved"):
+        # Only true once there was something to commit. Saying it during planning sends people
+        # looking for a branch that has nothing on it.
+        reason += " Any commits it had already made are still on the branch."
+    if run := latest_run(conn, feature_id):
+        # Not finish_run: that writes head_sha unconditionally, so cancelling a retry would
+        # erase the commit the previous attempt recorded.
+        conn.execute(
+            "UPDATE runs SET status = ?, ended_at = ?, error = ? WHERE id = ?",
+            ("cancelled", time.time(), reason, run["id"]),
+        )
+    set_feature_status(conn, feature_id, "cancelled")
+    return reason
 
 
 def reconcile_interrupted(conn: sqlite3.Connection) -> list[sqlite3.Row]:

@@ -76,6 +76,17 @@ push   = false
 remote = "origin"
 ```
 
+## Stopping a run
+
+**Stop** on a running feature ends it wherever it is running — this app, or a `drove execute` in a
+terminal. Commits already made stay on the branch, uncommitted edits stay in the worktree, and
+Resume picks the work back up.
+
+A run in another process is not signalled. A CLI streaming a harness ignores SIGINT, sent to its
+pid and to its process group alike, and runs to completion regardless; so the request is written
+to the run instead and the owning process stops itself at its next check, within a couple of
+seconds.
+
 ## When it gets interrupted
 
 Runs are long, and laptops close. Drove holds a power assertion while agents are working, so the

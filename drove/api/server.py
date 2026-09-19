@@ -561,14 +561,15 @@ def retry(feature_id: str) -> dict[str, Any]:
 
 @api.post("/features/{feature_id}/cancel")
 def cancel(feature_id: str) -> dict[str, Any]:
-    """Stop a run owned by this daemon while keeping its branch and worktree.
+    """Stop this feature's run while keeping its branch and worktree.
 
-    Busy state is memory-local. A run owned by `drove execute` in another process is deliberately
-    not cancellable here, matching the ownership boundary used by interrupted-run reconciliation.
+    Works whether the run belongs to this daemon or to a `drove execute` in a terminal: job state
+    is memory-local, but runs record their owning pid, and that process is asked to stop the same
+    way Ctrl-C would ask it.
     """
     row, _ = _load(feature_id)
     if not jobs.cancel(row["id"]):
-        raise HTTPException(409, "this feature is not running under this daemon")
+        raise HTTPException(409, "nothing is running for this feature")
     return _load(feature_id)[1]
 
 

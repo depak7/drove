@@ -1,8 +1,5 @@
 # drove — handoff
 
-TODO: a daemon cannot cancel a run owned by `drove execute` in another terminal; cancellation
-state is currently process-local.
-
 Written for an agent picking this up cold. Read this file, then `README.md`, then
 `drove/harness/base.py` and `drove/pipeline/engine.py` — those two carry the load.
 

@@ -13,7 +13,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
-import time
+import os
 from concurrent.futures import Future
 from dataclasses import dataclass
 from typing import Any
@@ -93,11 +93,16 @@ def active_features() -> list[str]:
 
 
 def cancel(feature_id: str) -> bool:
-    """Cancel a job owned by this daemon, from the route thread or the event loop itself."""
+    """Stop this feature's run, whichever process is driving it.
+
+    Job state is memory-local, so a run started by `drove execute` in a terminal is invisible
+    here. That run gets a cancel request written to its row instead, which the owning process
+    picks up and acts on itself.
+    """
     job = _active.get(feature_id)
     loop = _loop
     if job is None or job.done() or loop is None:
-        return False
+        return _request_remote_cancel(feature_id)
 
     def stop() -> None:
         if job.task is not None:
@@ -113,25 +118,28 @@ def cancel(feature_id: str) -> bool:
 
 
 def _record_cancellation(feature_id: str) -> None:
-    """Write down that a person stopped this, in terms that are true of the stage it stopped in."""
+    """Write down that a person stopped this, and tell anyone watching."""
     with db.connect() as conn:
-        feature = db.get_feature(conn, feature_id)
-        status = feature["status"] if feature is not None else ""
-        reason = f"You stopped this {db.STOPPED_DURING.get(status, 'mid-run')}."
-        if status not in ("planning", "approved"):
-            # Only true once there was something to commit. Saying it during planning sends
-            # people looking for a branch that has nothing on it.
-            reason += " Any commits it had already made are still on the branch."
-        if run := db.latest_run(conn, feature_id):
-            # Not finish_run: that writes head_sha unconditionally, so cancelling a retry would
-            # erase the commit the previous attempt recorded.
-            conn.execute(
-                "UPDATE runs SET status = ?, ended_at = ?, error = ? WHERE id = ?",
-                ("cancelled", time.time(), reason, run["id"]),
-            )
-        db.set_feature_status(conn, feature_id, "cancelled")
+        reason = db.cancel_run(conn, feature_id)
     emit(feature_id, "error", message=reason)
     emit(feature_id, "status", status="cancelled")
+
+
+def _request_remote_cancel(feature_id: str) -> bool:
+    """Ask the process that owns this run to stop itself.
+
+    Signals were the obvious route and do not work: a `drove execute` streaming a harness ignores
+    SIGINT — sent to its pid and to its process group alike — and runs to completion regardless.
+    So the request is recorded, and the owner acts on it at its next check. Slower by a second or
+    two, and it actually stops the run.
+    """
+    with db.connect() as conn:
+        run = db.latest_run(conn, feature_id)
+        pid = run["owner_pid"] if run else None
+        if not run or not pid or pid == os.getpid() or not db.process_alive(pid):
+            return False
+        db.request_cancel(conn, run["id"])
+    return True
 
 
 def _spawn(feature_id: str, coro) -> None:

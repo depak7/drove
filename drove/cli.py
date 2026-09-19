@@ -21,6 +21,9 @@ from drove.pipeline.stages.review import StageError as ReviewError
 from drove import workspace
 from drove.vcs import git, tree
 
+# How soon a run started here notices a cancel asked for elsewhere.
+CANCEL_POLL_SECONDS = 2.0
+
 app = typer.Typer(
     add_completion=False,
     help="Local autonomous engineering pipeline driving the coding CLIs you already have.",
@@ -410,13 +413,35 @@ def execute_cmd(
     def report(stage: str, message: str) -> None:
         typer.secho(f"\n\u25b8 {stage}: {message}", fg=typer.colors.CYAN, err=True)
 
+    async def watched(coro):
+        """Run the cycle, stopping it if someone asks from another process.
+
+        Cancelling the task is the same path Ctrl-C takes, and it already tears down harness
+        process groups. The alternative — having the daemon signal this process — does not work:
+        a CLI streaming a harness ignores SIGINT to its pid and to its group alike.
+        """
+        task = asyncio.ensure_future(coro)
+
+        async def watch() -> None:
+            while not task.done():
+                await asyncio.sleep(CANCEL_POLL_SECONDS)
+                if await asyncio.to_thread(db.cancel_requested, latest["id"]):
+                    task.cancel()
+                    return
+
+        watcher = asyncio.ensure_future(watch())
+        try:
+            return await task
+        finally:
+            watcher.cancel()
+
     try:
         if no_review:
             executed = asyncio.run(
-                run_execute(
+                watched(run_execute(
                     plan, trees, ws, latest["id"], latest["intent"],
                     resume_session=resume, on_event=ui.stream_line,
-                )
+                ))
             )
             outcome = RunOutcome(
                 status="delivered" if executed.committed else "no_changes",
@@ -429,15 +454,15 @@ def execute_cmd(
             )
         else:
             outcome = asyncio.run(
-                run_cycle(
+                watched(run_cycle(
                     plan, trees, ws, latest["id"], latest["intent"],
                     resume_session=resume, on_event=ui.stream_line, report=report,
-                )
+                ))
             )
-    except KeyboardInterrupt:
+    except (KeyboardInterrupt, asyncio.CancelledError):
+        # Reached by Ctrl-C and by a daemon asking this process to stop; both are the same event.
         with db.connect() as conn:
-            db.finish_run(conn, latest["id"], "cancelled", error="You stopped this run.")
-            db.set_feature_status(conn, row["id"], "cancelled")
+            db.cancel_run(conn, row["id"])
         typer.secho(
             f"stopped — commits already made are still on the branch; resume with "
             f"`drove execute {row['id']}`",
