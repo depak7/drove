@@ -4,7 +4,8 @@ const STAGES = [
   ['plan',    'Plan',    'Reads your code and writes the plan you approve.'],
   ['execute', 'Execute', 'Writes the code on an isolated branch.'],
   ['review',  'Review',  'Judges the diff. Must not be the harness that wrote it.'],
-  ['arbiter', 'Arbiter', 'Breaks a deadlock when review and execute disagree twice.'],
+  // No arbiter here until there is one. It was offered, saved, and did nothing — a setting that
+  // lies about what the product does is worse than a feature that is visibly missing.
 ]
 
 export function SettingsSheet({ workspace, harnesses: warmed, onClose, onSave }) {

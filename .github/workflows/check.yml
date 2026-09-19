@@ -1,0 +1,35 @@
+# Lint and the offline test suite on every push and pull request.
+#
+# Nothing here talks to a model. The three `live` tests spend real tokens against real CLI
+# subscriptions and are deselected by default, so CI exercises the adapters against recorded
+# fixtures instead — which is the whole reason those fixtures exist.
+name: check
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+
+      - name: Install
+        run: uv sync --extra dev
+
+      - name: Lint
+        run: uv run ruff check drove tests
+
+      # Browser checks are an opt-in extra and skip themselves without a browser. Installing one
+      # keeps them exercised here rather than only ever on a laptop that happens to have it.
+      - name: Install chromium
+        run: uv run playwright install --with-deps chromium
+
+      - name: Test
+        run: uv run pytest -q

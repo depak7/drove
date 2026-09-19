@@ -25,7 +25,11 @@ Working end to end, verified on real repos:
 | Isolation | a git worktree per repo per feature, teardown that refuses to lose work |
 | Workspaces | 1..N repos per workspace; a feature may change several at once |
 | Daemon + UI | FastAPI + SSE + React on localhost; workspaces and repos added from the app |
-| Tests | 186 collected, 3 marked `live` (spend tokens, deselected by default) |
+| Publishing | a passing run pushes its branch and records a compare link; opt out per repo |
+| Recovery | work interrupted by a shutdown is marked and resumable; Stop cancels across processes |
+| Reading | per-file diff, a code browser, and a real shell in the worktree |
+| Desktop | Electron shell with a PyInstaller sidecar; `npm run desktop:package` builds a DMG |
+| Tests | 243 collected, 3 marked `live` (spend tokens, deselected by default) |
 
 Proven live: a cross-repo rename in one workspace (`apilib` + `webapp`), reviewed by codex against
 the *combined* diff, delivered on the first round.
@@ -103,8 +107,13 @@ Ordered. Each item says why it matters, where to work, and what done looks like.
 
 ### 0. The arbiter stage — designed, never built
 
-`config.py` defaults `arbiter = "opencode"` and the design says a third model breaks a deadlock.
-Nothing reads it. Today the engine just stops at `needs_human` after two rounds.
+The design says a third model breaks a deadlock. Nothing reads it, and the engine stops at
+`needs_human` after two rounds.
+
+Its configuration has been **removed** rather than left advertising a stage that does nothing —
+it was offered in Settings, saved, and silently ignored. Put `arbiter` back in
+`config.DEFAULT_HARNESSES`, the `.drove.toml` template, `server.ROLE` and `Settings.jsx`'s
+`STAGES` as part of building it, not before.
 
 - New `pipeline/stages/arbitrate.py`. Fresh session. Input: the plan, the combined diff, and
   **both** verdicts. Output a typed schema (add `Arbitration` to `schemas.py`) —

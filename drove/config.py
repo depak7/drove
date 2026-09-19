@@ -16,7 +16,6 @@ DEFAULT_HARNESSES = {
     "plan": "claude",
     "execute": "claude",
     "review": "codex",
-    "arbiter": "opencode",
 }
 
 
@@ -94,7 +93,6 @@ remote = "origin"
 plan = "claude"
 execute = "claude"
 review = "codex"
-arbiter = "opencode"
 """
 
 

@@ -365,7 +365,6 @@ ROLE = {
     "plan": "Planner",
     "execute": "Builder",
     "review": "Reviewer",
-    "arbiter": "Arbiter",
 }
 
 

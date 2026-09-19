@@ -34,10 +34,23 @@ pytestmark = pytest.mark.skipif(
 )
 
 
-def free_port() -> int:
-    with socket.socket() as s:
-        s.bind(("127.0.0.1", 0))
-        return s.getsockname()[1]
+def free_port(attempts: int = 25) -> int:
+    """A port nothing is answering on — probed, not merely recently vacated.
+
+    Binding :0 and closing hands back a number the OS may still be tearing down, and the previous
+    test's server can still be answering on it. `run_browser` then refuses to start, correctly,
+    because something is already serving that URL — which reads as a flaky failure rather than the
+    port collision it is.
+    """
+    for _ in range(attempts):
+        with socket.socket() as picker:
+            picker.bind(("127.0.0.1", 0))
+            port = picker.getsockname()[1]
+        with socket.socket() as probe:
+            probe.settimeout(0.25)
+            if probe.connect_ex(("127.0.0.1", port)) != 0:
+                return port
+    raise RuntimeError(f"no quiet port available after {attempts} attempts")
 
 
 @pytest.fixture

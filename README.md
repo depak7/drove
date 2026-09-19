@@ -20,7 +20,7 @@ The point is **cross-model review**: the harness that wrote the code never grade
 ## Install
 
 ```bash
-uv tool install git+https://github.com/<you>/drove
+uv tool install git+https://github.com/depak7/drove
 cd ~/my-repo && drove init && drove doctor
 ```
 
