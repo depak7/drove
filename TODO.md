@@ -28,7 +28,7 @@ Working end to end, verified on real repos:
 | Isolation | a git worktree per repo per feature, teardown that refuses to lose work |
 | Workspaces | 1..N repos per workspace; a feature may change several at once |
 | Daemon + UI | FastAPI + SSE + React on localhost; workspaces and repos added from the app |
-| Tests | 134 collected, 3 marked `live` (spend tokens, deselected by default) |
+| Tests | 186 collected, 3 marked `live` (spend tokens, deselected by default) |
 
 Proven live: a cross-repo rename in one workspace (`apilib` + `webapp`), reviewed by codex against
 the *combined* diff, delivered on the first round.
@@ -65,7 +65,6 @@ drove/
   vcs/
     git.py          every git call goes through here
     tree.py         ★ a feature's worktrees, one per repo
-    worktree.py     ⚠ superseded by tree.py — see TODO 0
   api/
     server.py       REST + SSE
     jobs.py         background plan/cycle jobs
@@ -105,20 +104,7 @@ Break these and things fail in ways that are hard to diagnose.
 
 Ordered. Each item says why it matters, where to work, and what done looks like.
 
-### 0. Delete the dead `vcs/worktree.py` — do this first
-
-`tree.py` superseded it, but the module still sits there and **`tests/test_worktree.py` (14 tests)
-exercises code nothing calls.** That is worse than no tests: it inflates the count and will happily
-stay green while the code that actually runs rots.
-
-Only `Teardown` and `WorktreeError` are still imported (by `tree.py` and `api/server.py`).
-
-- Move `Teardown` and `WorktreeError` into `vcs/tree.py`, delete the rest of `worktree.py`.
-- Delete `tests/test_worktree.py`. Check each test first: anything it covers that
-  `tests/test_tree.py` does *not* should move across, not vanish.
-- **Done when:** `grep -rn "vcs.worktree" drove/ tests/` is empty and the suite is green.
-
-### 1. The arbiter stage — designed, never built
+### 0. The arbiter stage — designed, never built
 
 `config.py` defaults `arbiter = "opencode"` and the design says a third model breaks a deadlock.
 Nothing reads it. Today the engine just stops at `needs_human` after two rounds.
@@ -135,7 +121,7 @@ Nothing reads it. Today the engine just stops at `needs_human` after two rounds.
 - **Done when:** engine tests cover both sidings with stubs, and the evidence pack shows the
   three-way disagreement.
 
-### 2. Rate-limit back-pressure
+### 1. Rate-limit back-pressure
 
 `RateLimit` events are parsed and *displayed* (`ui.py`, `jobs.py`) and otherwise ignored. During
 development this hit 88% of the 5-hour window with nothing reacting.
@@ -146,7 +132,7 @@ development this hit 88% of the 5-hour window with nothing reacting.
 - Surface it: the UI should say "holding new runs, 5h window 91% used", not silently stall.
 - **Done when:** a test drives the gate with synthetic RateLimit events and asserts queueing.
 
-### 3. Parallel runs, actually tested
+### 2. Parallel runs, actually tested
 
 `MAX_CONCURRENT_RUNS = 2` in `api/jobs.py` and the semaphore has never run under load.
 
@@ -156,7 +142,7 @@ development this hit 88% of the 5-hour window with nothing reacting.
   confirm that is enough while two runs record sessions.
 - **Done when:** a test starts two cycles with stubbed stages and asserts isolation.
 
-### 4. Cost ledger
+### 3. Cost ledger
 
 `Result` carries exact token counts and, for claude, real cost. `sessions` stores per-stage
 figures. There is no per-feature or per-day view.
@@ -166,14 +152,14 @@ figures. There is no per-feature or per-day view.
   subscription auth — where the marginal cost genuinely *is* zero. Show `—`, never a guessed
   figure. (A `pricing.py` was deliberately deleted; see commit `ecbe221` for why.)
 
-### 5. `cursor-agent` adapter
+### 4. `cursor-agent` adapter
 
 Installed on this machine, listed in `registry.PLANNED`, honestly reported as unimplemented.
 
 - Follow `codex.py`. Record a real session as a fixture under `tests/fixtures/` and make it pass
   `tests/test_harness_conformance.py`, which is parametrized over every registered harness.
 
-### 6. Browser verification
+### 5. Browser verification
 
 Deferred from v1. Drove's own pitch includes browser-based user-flow testing.
 
@@ -181,7 +167,7 @@ Deferred from v1. Drove's own pitch includes browser-based user-flow testing.
   screenshots into the evidence pack.
 - Needs a new config block (`[verify.browser]`) and a way to say what "the app running" means.
 
-### 7. Delivery to GitHub
+### 6. Delivery to GitHub
 
 Everything stops at a local branch. `gh` is the obvious route.
 
@@ -189,7 +175,7 @@ Everything stops at a local branch. `gh` is the obvious route.
 - **For a cross-repo feature, the PRs must reference each other** and say they have to land
   together. This is presentation, not enforcement — see the caveat below.
 
-### 8. Packaging
+### 7. Packaging
 
 Currently `uv tool install git+…`, with UI assets committed because the wheel is built from the
 git tree.
