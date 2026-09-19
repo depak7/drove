@@ -29,7 +29,16 @@ class PlanDoc(BaseModel):
     summary: str = Field(description="One paragraph: what will be built and the approach")
     files_to_touch: list[str] = Field(default_factory=list)
     steps: list[PlanStep] = Field(default_factory=list)
-    risks: list[str] = Field(default_factory=list)
+    risks: list[str] = Field(
+        default_factory=list,
+        description=(
+            "Only genuine risks: something that could break, an assumption you had to make, or "
+            "an ambiguity in the request you resolved by choosing. Return an empty list when "
+            "there are none — most routine work has none, and an empty list is the correct "
+            "answer, not a missing one. Never restate the plan, the difficulty of the work, or "
+            "generic engineering caution as a risk."
+        ),
+    )
     acceptance_criteria: list[str] = Field(
         default_factory=list, description="Observable conditions that mean this is done"
     )
