@@ -45,6 +45,7 @@ class Evidence:
     reviews: list[ReviewVerdict] = field(default_factory=list)
     verify: VerifyOutcome | None = None
     browser: object | None = None
+    pushes: list[object] = field(default_factory=list)
     diff: str = ""
     diff_stat: str = ""
     # stage -> {harness, model, lab}
@@ -103,6 +104,7 @@ class Evidence:
             "reviews": [r.model_dump() for r in self.reviews],
             "verify": [asdict(c) for c in (self.verify.checks if self.verify else [])],
             "browser": [asdict(c) for c in getattr(self.browser, "checks", [])],
+            "source": [asdict(p) for p in self.pushes],
             "diff_stat": self.diff_stat,
             "cost_usd": self.cost_usd,
             "tokens_in": self.tokens_in,
@@ -127,6 +129,7 @@ class Evidence:
         self._review(add)
         self._asked(add)
         self._changed(add)
+        self._source(add)
         self._tests(add)
         self._browser(add)
         self._cost(add)
@@ -266,6 +269,27 @@ class Evidence:
             add("```")
             add("")
             add("</details>")
+            add("")
+
+    def _source(self, add) -> None:
+        """Where the work actually is. Without this the reader has only a branch name."""
+        if not self.pushes:
+            return
+        add("## Where to find it")
+        add("")
+        for push in self.pushes:
+            if push.pushed and push.url:
+                add(f"- **{push.repo}** — [open `{push.branch}`]({push.url})")
+            elif push.pushed:
+                add(f"- **{push.repo}** — pushed `{push.branch}` to `{push.remote}`")
+            else:
+                add(f"- **{push.repo}** — not pushed: {push.skipped or push.error}")
+        add("")
+        if any(p.pushed for p in self.pushes) and len(self.pushes) > 1:
+            add(
+                "These branches share a name and have to be merged together; opening one pull "
+                "request without the others breaks the build."
+            )
             add("")
 
     def _tests(self, add) -> None:

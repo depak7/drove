@@ -422,6 +422,64 @@ export function Review({ data }) {
  * the least readable presentation of the most important document. The .md still exists for
  * sending to someone outside the app; in here the same data is laid out.
  */
+/**
+ * Where the branch actually lives.
+ *
+ * A branch name is not an address. Until a run publishes it, the only way to see the work is to
+ * know this machine's worktree paths — so the link is the thing this panel exists to give you.
+ */
+export function Source({ data, busy, onPush }) {
+  const repos = data?.repos ?? []
+  const publish = onPush && (
+    <button className="primary" disabled={busy} onClick={onPush}>
+      {repos.length ? 'Push again' : 'Publish branch'}
+    </button>
+  )
+  if (!repos.length) {
+    return (
+      <div className="card">
+        <p style={{ color: 'var(--text-3)' }}>
+          Not published. A branch is pushed once review and your checks pass; set{' '}
+          <code>push = false</code> under <code>[deliver]</code> in <code>.drove.toml</code> to keep
+          a repo's branches local.
+        </p>
+        {publish}
+      </div>
+    )
+  }
+  return (
+    <>
+      {repos.length > 1 && (
+        <div className="card note">
+          These branches share a name and have to be merged together. Opening one without the
+          others breaks the build.
+        </div>
+      )}
+      {repos.map((repo) => (
+        <div key={repo.repo} className={`card source ${repo.pushed ? '' : 'bad'}`}>
+          <div className="shot-head">
+            <b>{repo.repo}</b>
+            <span className="mono dim">{repo.branch}</span>
+            <span className="grow" />
+            <span className={repo.pushed ? 'okmark' : 'flag'}>
+              {repo.pushed ? 'pushed' : 'not pushed'}
+            </span>
+          </div>
+          {repo.url ? (
+            <a className="srclink" href={repo.url} target="_blank" rel="noreferrer">
+              Open on the web ↗
+            </a>
+          ) : (
+            repo.pushed && <p className="dim mono">{repo.remote}</p>
+          )}
+          {!repo.pushed && <p className="dim">{repo.skipped || repo.error}</p>}
+        </div>
+      ))}
+      {publish && <div className="row">{publish}</div>}
+    </>
+  )
+}
+
 export function Evidence({ pack, markdown, onCopy }) {
   if (!pack || !Object.keys(pack).length) {
     return <div className="card"><p style={{ color: 'var(--text-3)' }}>

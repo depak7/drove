@@ -13,6 +13,7 @@ import logging
 import shlex
 import time
 from contextlib import asynccontextmanager
+from dataclasses import asdict
 from importlib import resources
 from pathlib import Path
 from typing import Any
@@ -29,6 +30,7 @@ from drove.api.bus import bus
 from drove.config import provisional_title, runs_dir
 from drove.harness import registry
 from drove.vcs import git
+from drove.vcs import remote as remote_mod
 from drove.vcs import tree as trees_mod
 from drove.vcs.git import GitError
 from drove.vcs.tree import WorktreeError
@@ -140,17 +142,37 @@ def _feature_json(conn, row) -> dict[str, Any]:
 def _available(row, runs) -> dict[str, bool]:
     latest = runs[-1] if runs else None
     run_dir = runs_dir(latest["id"]) if latest else None
+    packs = [_pack(r["id"]) for r in runs]
+    # A run whose work was already committed by a crashed earlier attempt records no head_sha —
+    # it had nothing left to commit — yet the branch is full of changes. Keying purely on the sha
+    # hid the diff and the source of exactly those runs, which are the ones worth looking at.
+    has_work = any(r["head_sha"] for r in runs) or any(p.get("files_changed") for p in packs)
     return {
         "plan": any(r["plan_json"] for r in runs),
         "log": bool(run_dir and run_dir.is_dir() and any(run_dir.glob("*.jsonl"))),
         # Something was committed, so there is a diff to read.
-        "diff": any(r["head_sha"] for r in runs),
+        "diff": has_work,
         # Keyed on the structured pack, which is what the app renders; the markdown beside it is
         # for sending to someone outside the app.
         "evidence": any((runs_dir(r["id"]) / "evidence.json").exists() for r in runs),
         "browser": any((runs_dir(r["id"]) / "screens").is_dir() for r in runs),
         "review": any((runs_dir(r["id"]) / "evidence.json").exists() for r in runs),
+        # Anything committed can be published, so the tab appears as soon as there is a branch
+        # worth pointing at — not only after a push has been recorded. Keying it on the push
+        # meant a branch that was never pushed had no screen from which to push it.
+        "source": has_work,
     }
+
+
+def _pack(run_id: str) -> dict:
+    """A run's evidence, or an empty pack when it never wrote one."""
+    path = runs_dir(run_id) / "evidence.json"
+    if not path.exists():
+        return {}
+    try:
+        return json.loads(path.read_text())
+    except (OSError, ValueError):
+        return {}
 
 
 @api.get("/health")
@@ -655,6 +677,50 @@ def browser_results(feature_id: str) -> dict[str, Any]:
     _, payload = _load(feature_id)
     run_id, data = _evidence_json(payload)
     return {"run_id": run_id, "checks": data.get("browser", [])}
+
+
+@api.get("/features/{feature_id}/source")
+def source(feature_id: str) -> dict[str, Any]:
+    """Where the branch was published, per repo — the link you actually open."""
+    row, payload = _load(feature_id)
+    for run in reversed(payload["runs"]):
+        if pushes := _pack(run["id"]).get("source"):
+            return {"run_id": run["id"], "branch": row["branch"], "repos": pushes}
+    return {"run_id": None, "branch": row["branch"], "repos": []}
+
+
+@api.post("/features/{feature_id}/push")
+def publish(feature_id: str) -> dict[str, Any]:
+    """Push the feature's branches now, and record where they went.
+
+    Runs push themselves when they pass, so this is for the cases they cannot cover: a repo with
+    `push = false` you have changed your mind about, a push that failed on a flaky network, and
+    branches built before publishing existed at all.
+    """
+    row, payload = _load(feature_id)
+    if jobs.is_busy(row["id"]):
+        raise HTTPException(409, "this feature is already running")
+
+    trees = _trees_for(row)
+    pushed = [remote_mod.push(t, t.repo.config.remote) for t in trees_mod.touched(trees)]
+    if not pushed:
+        raise HTTPException(400, "nothing has been committed on this branch yet")
+
+    # Record it on the latest run that has a pack, so the Source tab shows what just happened
+    # rather than staying empty until the next run writes one.
+    for run in reversed(payload["runs"]):
+        pack = runs_dir(run["id"]) / "evidence.json"
+        if not pack.exists():
+            continue
+        try:
+            data = json.loads(pack.read_text())
+        except ValueError:
+            break
+        data["source"] = [asdict(p) for p in pushed]
+        pack.write_text(json.dumps(data, indent=2))
+        break
+
+    return {"repos": [asdict(p) for p in pushed]}
 
 
 @api.get("/features/{feature_id}/screens/{name}")

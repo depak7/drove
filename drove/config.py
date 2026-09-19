@@ -45,6 +45,11 @@ class RepoConfig:
     # because that one holds shell commands and this holds structure.
     browser: dict = field(default_factory=dict)
     harness: dict[str, str] = field(default_factory=lambda: dict(DEFAULT_HARNESSES))
+    # Publish the branch once a run passes. On by default: a branch that exists only on this
+    # laptop cannot be opened, shared or built by CI, so delivery is not really delivery. A repo
+    # whose remote you would rather Drove left alone sets `push = false`.
+    push: bool = True
+    remote: str = "origin"
 
     @classmethod
     def load(cls, root: Path) -> RepoConfig:
@@ -60,6 +65,8 @@ class RepoConfig:
             verify={k: v for k, v in (data.get("verify") or {}).items() if isinstance(v, str)},
             browser=data.get("browser", {}) or {},
             harness={**DEFAULT_HARNESSES, **(data.get("harness", {}) or {})},
+            push=bool((data.get("deliver") or {}).get("push", True)),
+            remote=str((data.get("deliver") or {}).get("remote", "origin")),
         )
 
 
@@ -92,6 +99,13 @@ base_branch = "{base}"
 # dir   = "web"
 # url   = "http://localhost:5173"
 # paths = ["/"]
+
+[deliver]
+# Push the feature branch to the remote once review and your checks have passed, and record a
+# compare link with the evidence. Nothing is pushed for a run that failed. Set false to keep this
+# repo's branches local.
+push = true
+remote = "origin"
 
 [harness]
 # Cross-harness by stage: whoever writes the code must not be the one who reviews it.

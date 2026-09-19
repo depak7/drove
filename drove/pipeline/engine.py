@@ -17,6 +17,7 @@ from drove.pipeline.stages import review as review_stage
 from drove.pipeline.stages import browser as browser_stage
 from drove.pipeline.stages import verify as verify_stage
 from drove.pipeline.stages.execute import ExecuteOutcome, run_execute
+from drove.vcs import remote as remote_mod
 from drove.vcs import tree as trees_mod
 from drove.vcs.tree import FeatureTrees
 from drove.workspace import Workspace
@@ -34,6 +35,7 @@ class RunOutcome:
     sessions: dict[str, str] = field(default_factory=dict)
     files_changed: list[str] = field(default_factory=list)
     repos_touched: list[str] = field(default_factory=list)
+    pushes: list[remote_mod.Push] = field(default_factory=list)
     cost_usd: float | None = None
     tokens_in: int = 0
     tokens_out: int = 0
@@ -163,6 +165,19 @@ async def run_cycle(
             names = ", ".join(c.path for c in outcome.browser.failures)
             outcome.note = f"browser checks flagged {names}"
         break  # one app per feature; the first configured repo owns it
+
+    # --- PUBLISH --------------------------------------------------------------------------
+    # Only now, with review passed and your own checks green. A branch that only exists here
+    # cannot be opened, shared or built by CI, so pushing is part of delivering rather than a
+    # separate chore — but a push that fails says nothing about the work, so it never fails
+    # the run. Each repo decides for itself, and each is pushed independently.
+    for tree in trees_mod.touched(trees):
+        if not tree.repo.config.push:
+            continue
+        report("deliver", f"pushing {tree.branch} to {tree.repo.config.remote}")
+        pushed = remote_mod.push(tree, tree.repo.config.remote)
+        outcome.pushes.append(pushed)
+        report("deliver", f"{tree.repo.name}: {pushed.note}")
 
     outcome.status = "delivered"
     return _finish(outcome, costs, trees)

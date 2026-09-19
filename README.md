@@ -51,6 +51,26 @@ the recovery command printed, per repo independently.
 name and have to be merged together — the evidence pack and the UI say so, but nothing can enforce
 it.
 
+## Publishing
+
+A branch that exists only on this laptop is not delivered in any useful sense — you cannot open it,
+send it to anyone, or let CI near it. So once review and your own checks pass, Drove pushes the
+feature branch and records a compare link, which appears in the evidence pack and in the run's
+**source** tab. Each repo in a workspace is pushed independently.
+
+It pushes with `--force-with-lease`: rewriting our own fix rounds is fine, silently overwriting
+someone who has pushed to the branch is not. A push that fails — no remote, no credentials, a
+protected branch — is recorded and never fails the run, because none of those say anything about
+the quality of the work. You can push again from the source tab at any time.
+
+Opt a repo out in its `.drove.toml`:
+
+```toml
+[deliver]
+push   = false
+remote = "origin"
+```
+
 ## When it gets interrupted
 
 Runs are long, and laptops close. Drove holds a power assertion while agents are working, so the

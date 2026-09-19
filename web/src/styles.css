@@ -859,3 +859,26 @@ button.chain:hover { background: var(--surface-2); }
 .sessrow { display: flex; align-items: baseline; gap: 10px; padding: 5px 0; font-size: 12.5px; }
 .sessrow b { min-width: 76px; font-weight: 600; }
 .sessrow code { font-family: var(--mono); font-size: 11.5px; color: var(--text-2); }
+
+/* --- source: where the branch was published ------------------------------------------------- */
+
+.card.note {
+  border-color: var(--line-strong);
+  color: var(--text-2);
+  font-size: 13px;
+}
+
+.card.source .shot-head { margin-bottom: 10px; }
+.card.source.bad { border-color: color-mix(in srgb, var(--bad) 40%, var(--line)); }
+
+/* The link is the point of the panel, so it is a target rather than a line of text. */
+.srclink {
+  display: inline-block;
+  padding: 7px 12px;
+  border: 1px solid var(--line-strong);
+  border-radius: 7px;
+  color: var(--accent);
+  font-size: 13px;
+  text-decoration: none;
+}
+.srclink:hover { border-color: var(--accent); background: var(--surface-2); }

@@ -14,13 +14,22 @@ class GitError(RuntimeError):
     pass
 
 
-def git(repo: Path, *args: str, check: bool = True) -> str:
-    proc = subprocess.run(
+def run(repo: Path, *args: str) -> subprocess.CompletedProcess[str]:
+    """The raw result, for callers that need the exit code and stderr rather than the output.
+
+    A push is the case this exists for: its useful output is on stderr even when it succeeds, and
+    its failures are ordinary conditions to report, not exceptions to raise.
+    """
+    return subprocess.run(
         ["git", "-C", str(repo), *args],
         capture_output=True,
         text=True,
         stdin=subprocess.DEVNULL,
     )
+
+
+def git(repo: Path, *args: str, check: bool = True) -> str:
+    proc = run(repo, *args)
     if check and proc.returncode != 0:
         raise GitError(f"git {' '.join(args)} failed ({proc.returncode}): {proc.stderr.strip()}")
     return proc.stdout.strip()

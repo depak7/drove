@@ -471,6 +471,8 @@ def execute_cmd(
             files_changed=outcome.files_changed,
             reviews=outcome.reviews,
             verify=outcome.verify,
+            browser=outcome.browser,
+            pushes=outcome.pushes,
             cost_usd=outcome.cost_usd,
             tokens_in=outcome.tokens_in,
             tokens_out=outcome.tokens_out,
