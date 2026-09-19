@@ -403,6 +403,9 @@ def execute_cmd(
 
     with db.connect() as conn:
         db.set_feature_status(conn, row["id"], "executing")
+        # The daemon retires stranded runs at startup by checking whether the owning process is
+        # still alive. Claim this one so a daemon starting mid-execute leaves it alone.
+        db.claim_run(conn, latest["id"])
 
     def report(stage: str, message: str) -> None:
         typer.secho(f"\n\u25b8 {stage}: {message}", fg=typer.colors.CYAN, err=True)
@@ -431,6 +434,16 @@ def execute_cmd(
                     resume_session=resume, on_event=ui.stream_line, report=report,
                 )
             )
+    except KeyboardInterrupt:
+        with db.connect() as conn:
+            db.finish_run(conn, latest["id"], "cancelled", error="You stopped this run.")
+            db.set_feature_status(conn, row["id"], "cancelled")
+        typer.secho(
+            f"stopped — commits already made are still on the branch; resume with "
+            f"`drove execute {row['id']}`",
+            fg=typer.colors.YELLOW,
+        )
+        raise typer.Exit(130) from None
     except (StageError, ExecuteError, ReviewError, KeyError) as exc:
         with db.connect() as conn:
             db.finish_run(conn, latest["id"], "failed")

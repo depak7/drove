@@ -106,3 +106,61 @@ def test_wal_lets_a_reader_work_during_a_write(tmp_path, monkeypatch):
     finally:
         writer.rollback()
         writer.close()
+
+
+# --- interrupted work ---------------------------------------------------------------------------
+
+def test_a_run_whose_owner_died_is_marked_interrupted(conn):
+    """The failure this exists for: the daemon stops mid-execute and the row claims to run forever.
+
+    Job state lives in memory, so after a restart nothing remembers the work — but the database
+    still says `executing`, and the UI believes it.
+    """
+    fid = make_feature(conn)
+    run_id, _ = db.create_run(conn, fid, "build it")
+    db.set_feature_status(conn, fid, "executing")
+    # A pid that is not running. 2**22 is above every Linux/macOS pid_max.
+    conn.execute("UPDATE runs SET owner_pid = ? WHERE id = ?", (4_194_303, run_id))
+
+    stranded = db.reconcile_interrupted(conn)
+
+    assert [row["id"] for row in stranded] == [fid]
+    assert db.get_feature(conn, fid)["status"] == "interrupted"
+    run = db.latest_run(conn, fid)
+    assert run["status"] == "interrupted"
+    assert run["ended_at"] is not None
+    assert "while it was implementing" in run["error"]
+
+
+def test_a_run_owned_by_a_live_process_is_left_alone(conn):
+    """`drove execute` in a terminal is not orphaned just because the daemon restarted."""
+    fid = make_feature(conn)
+    run_id, _ = db.create_run(conn, fid, "build it")
+    db.set_feature_status(conn, fid, "executing")
+    db.claim_run(conn, run_id)  # claims for this very process, which is by definition alive
+
+    assert db.reconcile_interrupted(conn) == []
+    assert db.get_feature(conn, fid)["status"] == "executing"
+
+
+def test_a_plan_waiting_on_you_survives_a_restart(conn):
+    """A gate is not work in flight. Sweeping it would throw away a plan you were about to read."""
+    fid = make_feature(conn)
+    db.create_run(conn, fid, "build it")
+    db.set_feature_status(conn, fid, "awaiting_approval")
+
+    assert db.reconcile_interrupted(conn) == []
+    assert db.get_feature(conn, fid)["status"] == "awaiting_approval"
+
+
+def test_reconciling_keeps_the_commit_a_run_reached(conn):
+    """The recorded head is how you find the work afterwards; retiring a run must not erase it."""
+    fid = make_feature(conn)
+    run_id, _ = db.create_run(conn, fid, "build it")
+    db.finish_run(conn, run_id, "delivered", head_sha="abc1234")
+    conn.execute("UPDATE runs SET status = 'executing', ended_at = NULL WHERE id = ?", (run_id,))
+    db.set_feature_status(conn, fid, "executing")
+
+    db.reconcile_interrupted(conn)
+
+    assert db.latest_run(conn, fid)["head_sha"] == "abc1234"

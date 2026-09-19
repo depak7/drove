@@ -11,6 +11,7 @@ fixture. Putting megabytes of transcript in SQLite would buy nothing.
 from __future__ import annotations
 
 import json
+import os
 import sqlite3
 import time
 import uuid
@@ -90,6 +91,13 @@ MIGRATIONS: list[str] = [
     # the only account of what went wrong.
     """
     ALTER TABLE runs ADD COLUMN error TEXT;
+    """,
+    # 5 — which process owns a run. Job state lives in memory, so a daemon that dies takes with it
+    # the only record that work was in flight, leaving the row claiming to run forever. The pid
+    # makes that recoverable: at startup a run whose owner is gone is provably orphaned, while one
+    # owned by a live `drove execute` in a terminal is left alone.
+    """
+    ALTER TABLE runs ADD COLUMN owner_pid INTEGER;
     """,
 ]
 
@@ -316,6 +324,72 @@ def list_runs(conn: sqlite3.Connection, feature_id: str) -> list[sqlite3.Row]:
     return conn.execute(
         "SELECT * FROM runs WHERE feature_id = ? ORDER BY iteration", (feature_id,)
     ).fetchall()
+
+
+
+# --- interrupted work ---------------------------------------------------------------------------
+
+# Feature statuses that assert a process is working right now. Gates like `awaiting_approval` are
+# deliberately absent: nothing is running there, and a plan waiting on you must survive a restart.
+ACTIVE_STATUSES = ("planning", "approved", "executing", "fixing", "reviewing", "verifying")
+
+# What the machine was doing, in words that survive being read a day later.
+STOPPED_DURING = {
+    "planning": "while it was planning",
+    "approved": "before it started work",
+    "executing": "while it was implementing",
+    "fixing": "while it was fixing review issues",
+    "reviewing": "while it was under review",
+    "verifying": "while your checks were running",
+}
+
+
+def claim_run(conn: sqlite3.Connection, run_id: str) -> None:
+    """Record this process as the owner, so an abandoned run can be told from a live one."""
+    conn.execute("UPDATE runs SET owner_pid = ? WHERE id = ?", (os.getpid(), run_id))
+
+
+def _alive(pid: int | None) -> bool:
+    if not pid:
+        return False
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True  # exists, just not ours to signal
+    return True
+
+
+def reconcile_interrupted(conn: sqlite3.Connection) -> list[sqlite3.Row]:
+    """Retire work whose owning process is gone, and return the features it belonged to.
+
+    Called at daemon startup. Without it a feature interrupted by a shutdown, a crash or a closed
+    laptop keeps its running status forever: the UI reads the database and shows a live spinner,
+    the scheduler reads memory and sees nothing, and no screen offers a way out. Marking these
+    `interrupted` turns a dead end into the one thing it should be — a run you can resume.
+    """
+    marks = ",".join("?" * len(ACTIVE_STATUSES))
+    stranded: list[sqlite3.Row] = []
+    for feature in conn.execute(
+        f"SELECT * FROM features WHERE status IN ({marks})", ACTIVE_STATUSES
+    ).fetchall():
+        run = latest_run(conn, feature["id"])
+        if run and _alive(run["owner_pid"]):
+            continue  # a `drove execute` in a terminal is still working on it
+        reason = (
+            f"Drove stopped {STOPPED_DURING.get(feature['status'], 'mid-run')}. "
+            "Any commits it had already made are still on the branch."
+        )
+        if run and run["ended_at"] is None:
+            # Not finish_run: that writes head_sha, and passing None would erase a recorded one.
+            conn.execute(
+                "UPDATE runs SET status = ?, ended_at = ?, error = ? WHERE id = ?",
+                ("interrupted", time.time(), reason, run["id"]),
+            )
+        set_feature_status(conn, feature["id"], "interrupted")
+        stranded.append(feature)
+    return stranded
 
 
 # --- sessions ---------------------------------------------------------------------------------

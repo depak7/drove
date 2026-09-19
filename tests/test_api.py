@@ -244,3 +244,54 @@ async def test_unsubscribed_queues_stop_receiving():
         pass
     bus.publish({"kind": "x"})
     assert queue.empty()
+
+
+# --- interrupted work ---------------------------------------------------------------------------
+
+
+def test_the_daemon_retires_stranded_work_before_serving_anything(client, state, monkeypatch):
+    """A feature left `executing` by a dead daemon must not greet you as a live run."""
+    from drove import db
+
+    ws = new_workspace(client)
+    feature = new_feature(client, ws)
+    with db.connect() as conn:
+        db.set_feature_status(conn, feature["id"], "executing")
+        run = db.latest_run(conn, feature["id"])
+        conn.execute("UPDATE runs SET owner_pid = ? WHERE id = ?", (4_194_303, run["id"]))
+
+    # A second daemon boots against the same database — a restart, in other words.
+    with TestClient(server.build_app()) as fresh:
+        body = fresh.get(f"/api/features/{feature['id']}").json()
+
+    assert body["status"] == "interrupted"
+    assert "while it was implementing" in body["error"]
+
+
+def test_resuming_a_feature_interrupted_before_it_planned_replans_the_same_request(client):
+    """There is no plan to re-run, but the request is on record — do not make someone retype it."""
+    from drove import db
+
+    ws = new_workspace(client)
+    feature = new_feature(client, ws, task="add oauth login")
+    with db.connect() as conn:
+        db.set_feature_status(conn, feature["id"], "interrupted")
+
+    assert client.post(f"/api/features/{feature['id']}/retry").status_code == 200
+    assert client.started[-1][0] == "plan"
+    assert client.started[-1][1][1] == "add oauth login"
+
+
+def test_retry_still_refuses_a_planless_feature_that_was_not_interrupted(client):
+    ws = new_workspace(client)
+    feature = new_feature(client, ws)
+
+    assert client.post(f"/api/features/{feature['id']}/retry").status_code == 400
+
+
+def test_cancelling_a_feature_not_owned_by_this_daemon_is_a_conflict(client):
+    feature = new_feature(client, new_workspace(client))
+
+    response = client.post(f"/api/features/{feature['id']}/cancel")
+
+    assert response.status_code == 409

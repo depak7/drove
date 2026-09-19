@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import json
 import os
+import signal
 from collections.abc import AsyncIterator, Callable
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -55,6 +57,26 @@ class Harness(Protocol):
 _CHUNK = 256 * 1024
 
 
+async def _terminate_process_group(proc: asyncio.subprocess.Process) -> None:
+    """Stop and reap a harness process group without letting cleanup hang cancellation."""
+    try:
+        pgid = os.getpgid(proc.pid)
+        os.killpg(pgid, signal.SIGTERM)
+    except (ProcessLookupError, PermissionError):
+        if proc.returncode is None:
+            with contextlib.suppress(ProcessLookupError, PermissionError):
+                proc.kill()
+    else:
+        # The group leader may exit while one of its tool children ignores TERM. Always follow
+        # with KILL after a grace period; waiting only for the leader would leak that child.
+        await asyncio.sleep(0.2)
+        with contextlib.suppress(ProcessLookupError, PermissionError):
+            os.killpg(pgid, signal.SIGKILL)
+
+    with contextlib.suppress(Exception):
+        await asyncio.wait_for(proc.wait(), timeout=0.5)
+
+
 async def _lines(stream: asyncio.StreamReader) -> AsyncIterator[str]:
     """Yield newline-delimited text with no limit on how long a line may be."""
     buffer = bytearray()
@@ -86,13 +108,15 @@ async def stream_jsonl_process(
 ) -> AsyncIterator[HarnessEvent]:
     """Spawn a CLI that emits JSON Lines on stdout and yield normalized events.
 
-    Two non-obvious rules, both learned by watching real CLIs misbehave:
+    Three non-obvious rules, all learned by watching real CLIs misbehave:
 
     * ``stdin`` is always ``DEVNULL``. Every harness tested (claude, codex) blocks waiting on
       stdin when it is not a TTY — codex hangs outright, claude stalls 3s then warns. Redirecting
       is not optional.
     * stdout is read line-by-line and tee'd verbatim to ``raw_log`` *before* parsing, so a parse
       failure never costs us the evidence of what actually happened.
+    * the CLI starts a new process group and cancellation kills the whole group. Leaving an
+      orphaned codex or claude process editing the worktree is worse than not supporting cancel.
     """
     proc_env = {**os.environ, **(env or {})}
     log = None
@@ -107,6 +131,7 @@ async def stream_jsonl_process(
         stdout=asyncio.subprocess.PIPE,
         stderr=asyncio.subprocess.PIPE,
         env=proc_env,
+        start_new_session=True,
     )
     assert proc.stdout is not None
 
@@ -129,8 +154,6 @@ async def stream_jsonl_process(
         if code != 0:
             raise HarnessError(f"{argv[0]} exited {code}: {stderr.strip()[:2000]}")
     finally:
-        if proc.returncode is None:
-            proc.kill()
-            await proc.wait()
+        await _terminate_process_group(proc)
         if log is not None:
             log.close()

@@ -157,15 +157,26 @@ async def run_browser(cwd: Path, config: dict, shots_dir: Path) -> BrowserOutcom
         shots_dir.mkdir(parents=True, exist_ok=True)
         paths = [str(p) for p in (config.get("paths") or ["/"])]
 
-        async with async_playwright() as pw:
-            browser = await pw.chromium.launch()
-            try:
-                for index, path in enumerate(paths):
-                    outcome.checks.append(
-                        await _check_page(browser, url, path, shots_dir, index)
-                    )
-            finally:
-                await browser.close()
+        try:
+            async with async_playwright() as pw:
+                browser = await pw.chromium.launch()
+                try:
+                    for index, path in enumerate(paths):
+                        outcome.checks.append(
+                            await _check_page(browser, url, path, shots_dir, index)
+                        )
+                finally:
+                    await browser.close()
+        except Exception as exc:
+            # The browser itself failing to start is a skip, never a failed run. This stage is
+            # advisory, and the common cause is simply that no browser is installed — the
+            # playwright package can be present while its browsers are not, which is exactly the
+            # state a packaged app ships in.
+            first = str(exc).split("\n")[0][:200]
+            return BrowserOutcome(
+                skipped=f"could not start a browser: {first}. Run `playwright install chromium`.",
+                startup_log=outcome.startup_log,
+            )
 
         outcome.ran = True
         return outcome

@@ -13,7 +13,7 @@ import { NEEDS_YOU, needsYou } from './stages'
 import { Agents, Blank, Runs } from './Agents'
 import { isDesktop, notify, setPulse } from './desktop'
 
-const PIVOTABLE = ['delivered', 'landed', 'needs_human', 'verify_failed', 'no_changes']
+const PIVOTABLE = ['delivered', 'landed', 'needs_human', 'verify_failed', 'no_changes', 'cancelled']
 const ACTIVE = ['planning', 'awaiting_approval', 'approved', 'executing', 'fixing', 'reviewing', 'verifying']
 
 export default function App() {
@@ -83,10 +83,16 @@ export default function App() {
 
   useEffect(() => {
     if (!isDesktop) return
-    setPulse({
+    const beat = () => setPulse({
       running: features.filter((f) => f.busy).length,
       waiting: features.filter(needsYou).length,
     })
+    beat()
+    // A heartbeat, not only an edge. The main process holds the Mac awake off these, and releases
+    // when they stop — so closing the window or losing the renderer cannot strand the assertion
+    // and leave the machine awake until you quit.
+    const timer = setInterval(beat, 30_000)
+    return () => clearInterval(timer)
   }, [features])
 
   useEffect(() => {
@@ -438,6 +444,17 @@ function Detail({
         <span className="sep">→</span>
         <span className="mono">{feature.base}</span>
         {feature.iterations > 1 && <><span className="sep">·</span><span>{feature.iterations} runs</span></>}
+        {feature.busy && (
+          <button
+            className="ghost danger"
+            onClick={() => {
+              const keep = 'Stop this run? Commits stay on the branch and uncommitted edits stay in the worktree.'
+              if (window.confirm(keep)) act(() => api.cancel(feature.id))
+            }}
+          >
+            Stop
+          </button>
+        )}
       </div>
 
       <div style={{ marginBottom: 20 }}>
@@ -465,15 +482,6 @@ function Detail({
               onRevise={(feedback) => act(() => api.revise(feature.id, feedback))}
             />
           )}
-          {!gated && NEEDS_YOU[feature.status] && (
-            <Stopped
-              feature={feature}
-              busy={feature.busy}
-              onPivot={(intent) => act(() => api.pivot(feature.id, intent))}
-              onRetry={feature.plan ? () => act(() => api.retry(feature.id)) : null}
-              onDiscard={() => act(async () => { await api.decline(feature.id); onDiscard() })}
-            />
-          )}
           {!NEEDS_YOU[feature.status] && PIVOTABLE.includes(feature.status) && (
             <Pivot busy={feature.busy} onPivot={(intent) => act(() => api.pivot(feature.id, intent))} />
           )}
@@ -488,6 +496,23 @@ function Detail({
           pack={evidence?.pack}
           markdown={evidence?.markdown}
           onCopy={(md) => navigator.clipboard?.writeText(md)}
+        />
+      )}
+
+      {/* Outside the tabs, deliberately. This used to live under `plan`, which hid the decision
+          behind a click — and hid it completely for a run that stopped before it ever produced a
+          plan, leaving the one status you most need to act on with nothing to act with. */}
+      {stopped && (
+        <Stopped
+          feature={feature}
+          busy={feature.busy}
+          onPivot={(intent) => act(() => api.pivot(feature.id, intent))}
+          onRetry={
+            feature.plan || ['interrupted', 'cancelled'].includes(feature.status)
+              ? () => act(() => api.retry(feature.id))
+              : null
+          }
+          onDiscard={() => act(async () => { await api.decline(feature.id); onDiscard() })}
         />
       )}
     </div>
@@ -524,8 +549,16 @@ function Stopped({ feature, busy, onPivot, onRetry, onDiscard }) {
         <span className="grow" />
         <button className="ghost danger" disabled={busy} onClick={onDiscard}>Discard</button>
         {onRetry && (
-          <button disabled={busy} onClick={onRetry} title="Run the same plan again, unchanged">
-            Try again
+          <button
+            disabled={busy}
+            onClick={onRetry}
+            title={
+              feature.status === 'interrupted'
+                ? 'Pick the work back up from where it stopped'
+                : 'Run the same plan again, unchanged'
+            }
+          >
+            {feature.status === 'interrupted' ? 'Resume' : 'Try again'}
           </button>
         )}
         <button className="primary" disabled={busy || !intent.trim()} onClick={send}>
