@@ -46,12 +46,12 @@ header{height:76px;display:flex;align-items:center;gap:20px}
 .nav a:hover{color:var(--text);text-decoration:none}
 
 .hero{border:0;padding:clamp(48px,7vw,96px) 0 clamp(54px,8vw,108px)}
-.hero-grid{display:grid;grid-template-columns:minmax(0,1.13fr) minmax(330px,.87fr);gap:clamp(40px,7vw,110px);align-items:center}
-.eyebrow{display:flex;align-items:center;gap:9px;margin-bottom:20px;color:var(--muted);font:600 12px/1 var(--mono);letter-spacing:.08em;text-transform:uppercase}
+.hero-grid{display:block}
+.eyebrow{display:flex;align-items:center;gap:9px;margin-bottom:18px;color:var(--muted);font:600 12px/1 var(--mono);letter-spacing:.08em;text-transform:uppercase;white-space:nowrap}
 .eyebrow i{width:8px;height:8px;border-radius:999px;background:var(--accent);box-shadow:0 0 0 5px var(--accent-soft)}
-.hero h1{font-size:clamp(42px,5.4vw,76px);font-weight:680;max-width:10.5ch}
+.hero h1{font-size:clamp(34px,3vw,44px);font-weight:680;max-width:none;white-space:nowrap}
 .hero h1 em{font-style:normal;color:var(--accent-hi)}
-.hero p{font-size:clamp(17px,1.55vw,20px);color:var(--muted);max-width:52ch;margin-top:24px}
+.hero p{font-size:clamp(15px,1.35vw,18px);color:var(--muted);max-width:none;margin-top:16px;white-space:nowrap}
 .cta{display:flex;flex-wrap:wrap;gap:12px;align-items:center;margin-top:30px}
 .btn{
   display:inline-flex;align-items:center;justify-content:center;min-height:44px;padding:10px 17px;border-radius:9px;font-size:14px;font-weight:650;
@@ -60,18 +60,6 @@ header{height:76px;display:flex;align-items:center;gap:20px}
 .btn:hover{border-color:var(--accent);text-decoration:none}
 .btn.primary{background:var(--accent);border-color:var(--accent);color:#FFF4F1}
 .btn.primary:hover{background:var(--accent-hi)}
-.microcopy{display:flex;align-items:center;gap:8px;color:var(--quiet);font-size:13px;margin-top:18px}
-.microcopy svg{color:var(--ok);flex:0 0 auto}
-
-.run-card{list-style:none;margin:0;padding:14px;background:var(--surface);border:1px solid var(--line);border-radius:var(--radius)}
-.run-card li{display:grid;grid-template-columns:34px 1fr;gap:12px;padding:15px 10px;border-bottom:1px solid var(--line)}
-.run-card li:last-child{border-bottom:0}
-.run-card .icon{display:grid;place-items:center;width:32px;height:32px;border-radius:8px;background:var(--surface-2);color:var(--accent-hi)}
-.run-card .approve .icon{background:var(--accent-soft);color:var(--accent-hi)}
-.run-card .deliver .icon{color:var(--ok)}
-.run-card strong{font-size:14px;letter-spacing:-.01em}
-.run-card span{display:block;color:var(--muted);font-size:13px;margin-top:2px}
-
 .section-head{display:grid;grid-template-columns:minmax(0,1fr) minmax(260px,.75fr);gap:36px;align-items:end;margin-bottom:34px}
 .section-head h2{font-size:clamp(30px,4vw,48px);font-weight:670;max-width:15ch}
 .section-head p{color:var(--muted);max-width:42ch}
@@ -102,8 +90,13 @@ header{height:76px;display:flex;align-items:center;gap:20px}
 .start{display:grid;grid-template-columns:1fr minmax(320px,.8fr);gap:clamp(32px,7vw,96px);align-items:center}
 .start h2{font-size:clamp(30px,4vw,48px);font-weight:670;max-width:11ch}
 .start p{color:var(--muted);max-width:42ch;margin-top:14px}
-pre{margin:0;padding:22px;overflow-x:auto;background:var(--surface);border:1px solid var(--line);border-radius:var(--radius);color:var(--text);font:13px/1.75 var(--mono)}
+.command{position:relative}
+pre{margin:0;padding:22px 64px 22px 22px;overflow-x:auto;background:var(--surface);border:1px solid var(--line);border-radius:var(--radius);color:var(--text);font:13px/1.75 var(--mono)}
 pre .c{color:var(--quiet)}
+.copy{position:absolute;right:10px;top:10px;display:inline-flex;align-items:center;gap:6px;min-height:32px;padding:6px 9px;border:1px solid var(--line);border-radius:7px;background:var(--surface-2);color:var(--muted);font:600 11px/1 var(--sans);cursor:pointer}
+.copy:hover{border-color:var(--accent);color:var(--text)}
+.copy svg{width:14px;height:14px}.copy.copied{color:var(--ok);border-color:var(--ok)}
+.github-link{display:inline-flex;align-items:center;gap:6px}.github-link svg{width:15px;height:15px;fill:currentColor}
 .limits{padding-bottom:clamp(52px,8vw,96px)}
 .limits h2{font-size:clamp(25px,3vw,36px);font-weight:660}
 .limits ul{list-style:none;padding:0;margin:22px 0 0;display:grid;grid-template-columns:repeat(3,1fr);gap:14px}
@@ -113,14 +106,14 @@ footer{padding:26px 0 46px;border-top:1px solid var(--line);display:flex;flex-wr
 footer span:last-child{margin-left:auto}
 
 @media (max-width:820px){
-  .hero-grid,.configure,.start,.section-head{grid-template-columns:1fr}
-  .hero h1{max-width:12ch}.run-card{max-width:620px}
+  .configure,.start,.section-head{grid-template-columns:1fr}
+  .hero h1,.hero p{white-space:normal}
   .proof-grid,.limits ul{grid-template-columns:1fr}
   .proof{min-height:0;border-right:0;border-bottom:1px solid var(--line)}.proof:last-child{border-bottom:0}
   .proof .icon{margin-bottom:22px}
 }
 @media (max-width:560px){
-  .wrap{padding:0 20px}.nav{display:none}.hero{padding-top:36px}.hero h1{font-size:42px}
+  .wrap{padding:0 20px}.nav{display:none}.hero{padding-top:36px}.hero h1{font-size:38px}.hero p{font-size:16px}
   .cta{display:grid;grid-template-columns:1fr}.btn{width:100%}.section-head{gap:14px;margin-bottom:26px}
   .limits ul{gap:16px}footer span:last-child{margin-left:0;width:100%}
   .config-row{grid-template-columns:1fr;gap:8px}.config-choice{grid-template-columns:1fr}
@@ -132,20 +125,14 @@ footer span:last-child{margin-left:auto}
 <main class="wrap">
   <header>
     <a class="brand" href="#top" aria-label="Drove home"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M2.5 6.5h8.5M2.5 12h12M2.5 17.5h8.5M15.5 7.2 20.8 12l-5.3 4.8" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/></svg>drove</a>
-    <nav class="nav"><a href="#how">How it works</a><a href="#configure">Configure</a><a href="#honest">Limits</a><a href="https://github.com/depak7/drove">GitHub</a></nav>
+    <nav class="nav"><a href="#how">How it works</a><a href="#configure">Configure</a><a href="#honest">Limits</a><a class="github-link" href="https://github.com/depak7/drove"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M8 0a8 8 0 0 0-2.53 15.59c.4.07.55-.17.55-.38v-1.49c-2.23.49-2.7-.95-2.7-.95-.36-.93-.89-1.18-.89-1.18-.73-.5.06-.49.06-.49.8.06 1.23.83 1.23.83.72 1.22 1.88.87 2.34.66.07-.51.28-.87.51-1.07-1.78-.2-3.65-.89-3.65-3.96 0-.88.31-1.59.83-2.15-.08-.2-.36-1.02.08-2.13 0 0 .67-.22 2.2.82A7.6 7.6 0 0 1 8 4.8c.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.11.16 1.93.08 2.13.52.56.83 1.27.83 2.15 0 3.08-1.88 3.76-3.67 3.96.29.25.54.73.54 1.48v2.2c0 .21.14.46.55.38A8 8 0 0 0 8 0Z"/></svg>GitHub</a></nav>
   </header>
   <section class="hero" id="top"><div class="hero-grid"><div>
-    <div class="eyebrow"><i></i> local engineering pipeline</div>
-    <h1>Your coding agent writes. A different one <em>reviews.</em></h1>
-    <p>Approve a plan. Drove builds on an isolated branch, has a fresh model review the diff, runs your checks, then pushes the branch.</p>
+    <div class="eyebrow"><i></i> one autonomous, local pipeline</div>
+    <h1>Claude plans. Codex builds. OpenCode <em>reviews.</em></h1>
+    <p>Use the CLIs and subscriptions you already have. Drove runs them locally, then hands you a reviewed branch and checks.</p>
     <div class="cta"><a class="btn primary" href="https://github.com/depak7/drove#install">Run Drove locally</a><a class="btn" href="#how">How it works</a></div>
-    <div class="microcopy"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="m5 12 4.2 4.2L19 6.8" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/></svg>Uses the Claude, Codex, or OpenCode CLI you already run.</div>
-  </div><ol class="run-card" aria-label="A Drove run">
-    <li><span class="icon">1</span><div><strong>Plan</strong><span>It reads the code before proposing work.</span></div></li>
-    <li class="approve"><span class="icon">2</span><div><strong>You approve</strong><span>Nothing writes until the direction is right.</span></div></li>
-    <li><span class="icon">3</span><div><strong>Build and review</strong><span>An isolated worktree keeps your checkout safe.</span></div></li>
-    <li class="deliver"><span class="icon">4</span><div><strong>Deliver</strong><span>Checks, evidence, and a pushed branch.</span></div></li>
-  </ol></div></section>
+  </div></div></section>
   <section id="how"><div class="section-head"><h2>Do not ask the writer to grade its own work.</h2><p>Drove hands the finished diff and task to a fresh reviewer. You get the review, test output, and cost with the branch.</p></div>
     <div class="proof-grid">
       <article class="proof"><div class="icon"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M12 3a8 8 0 1 0 8 8M12 7v5l3 2M19 4v4h-4" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg></div><h3>Independent review</h3><p>Use a different model for the review, or clearly see when the same one was used.</p></article>
@@ -164,11 +151,33 @@ footer span:last-child{margin-left:auto}
     <div class="config-row"><div class="config-role"><b>Review</b><span>Judges the finished diff.</span></div><div class="config-choice"><span>OpenCode</span><span>default</span></div></div>
     <p class="config-warning"><b>Independent review:</b> Drove warns you if Build and Review use the same CLI.</p>
   </div></div></section>
-  <section id="start"><div class="start"><div><h2>Start local. Stay in control.</h2><p>Install Drove once, add an existing Git repository, then approve your first plan.</p></div><pre><span class="c"># install once</span>
+  <section id="start"><div class="start"><div><h2>Start local. Stay in control.</h2><p>Install Drove once, add an existing Git repository, then approve your first plan.</p></div><div class="command"><button class="copy" type="button" data-copy="uv tool install git+https://github.com/depak7/drove" aria-label="Copy install command"><svg viewBox="0 0 24 24" fill="none" aria-hidden="true"><rect x="8" y="8" width="11" height="11" rx="1" stroke="currentColor" stroke-width="2"/><path d="M16 8V5a1 1 0 0 0-1-1H5a1 1 0 0 0-1 1v10a1 1 0 0 0 1 1h3" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg><span>Copy install</span></button><pre><span class="c"># install once</span>
 uv tool install git+https://github.com/depak7/drove
-drove serve   <span class="c"># http://localhost:8787</span></pre></div></section>
+drove serve   <span class="c"># http://localhost:8787</span></pre></div></div></section>
   <section id="honest"><div class="limits"><h2>Clear limits. No surprises.</h2><ul><li>You choose what to build. A review can catch code mistakes, not a bad product decision.</li><li>Drove uses existing Git repositories. It pushes branches and compare links; you open and merge the PR.</li><li>It uses your own model subscriptions and records each run's cost.</li></ul></div></section>
-  <footer><span>MIT licensed.</span><a href="https://github.com/depak7/drove">github.com/depak7/drove</a><span>Runs on your machine.</span></footer>
+  <footer><span>MIT licensed.</span><a class="github-link" href="https://github.com/depak7/drove"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M8 0a8 8 0 0 0-2.53 15.59c.4.07.55-.17.55-.38v-1.49c-2.23.49-2.7-.95-2.7-.95-.36-.93-.89-1.18-.89-1.18-.73-.5.06-.49.06-.49.8.06 1.23.83 1.23.83.72 1.22 1.88.87 2.34.66.07-.51.28-.87.51-1.07-1.78-.2-3.65-.89-3.65-3.96 0-.88.31-1.59.83-2.15-.08-.2-.36-1.02.08-2.13 0 0 .67-.22 2.2.82A7.6 7.6 0 0 1 8 4.8c.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.11.16 1.93.08 2.13.52.56.83 1.27.83 2.15 0 3.08-1.88 3.76-3.67 3.96.29.25.54.73.54 1.48v2.2c0 .21.14.46.55.38A8 8 0 0 0 8 0Z"/></svg>github.com/depak7/drove</a><span>Runs on your machine.</span></footer>
 </main>
+<script>
+document.querySelectorAll('[data-copy]').forEach((button) => {
+  button.addEventListener('click', async () => {
+    const command = button.dataset.copy
+    try { await navigator.clipboard.writeText(command) }
+    catch {
+      const input = document.createElement('textarea')
+      input.value = command
+      input.style.position = 'fixed'
+      input.style.opacity = '0'
+      document.body.append(input)
+      input.select()
+      document.execCommand('copy')
+      input.remove()
+    }
+    const label = button.querySelector('span')
+    label.textContent = 'Copied'
+    button.classList.add('copied')
+    setTimeout(() => { label.textContent = 'Copy install'; button.classList.remove('copied') }, 1800)
+  })
+})
+</script>
 </body>
 </html>
