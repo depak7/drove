@@ -17,7 +17,7 @@ PLAN = PlanDoc(
 
 def test_plan_file_lands_outside_every_repo(solo):
     """It must be unable to reach a commit, so it lives at the feature root, not in a worktree."""
-    trees = trees_mod.create(solo, "task-1")
+    trees = trees_mod.create(solo, "task-1", "feat/task-1")
     path = execute.write_plan_file(trees.root, PLAN)
 
     assert path.exists() and "Add subtract()" in path.read_text()
@@ -28,7 +28,7 @@ def test_plan_file_lands_outside_every_repo(solo):
 
 def test_commit_uses_the_users_words_not_the_plan_summary(solo):
     """plan.summary is explanatory prose; its first line is a terrible commit subject."""
-    trees = trees_mod.create(solo, "task-1")
+    trees = trees_mod.create(solo, "task-1", "feat/task-1")
     (trees.by_name("api").path / "api.py").write_text("x = 2\n")
 
     shas = execute.commit(trees, "Implement the missing subtract function")
@@ -40,7 +40,7 @@ def test_commit_uses_the_users_words_not_the_plan_summary(solo):
 
 
 def test_commit_subject_is_truncated_and_single_line(solo):
-    trees = trees_mod.create(solo, "task-1")
+    trees = trees_mod.create(solo, "task-1", "feat/task-1")
     (trees.by_name("api").path / "api.py").write_text("x = 2\n")
     execute.commit(trees, "a\nb   c" + " very long tail" * 20)
 
@@ -49,13 +49,13 @@ def test_commit_subject_is_truncated_and_single_line(solo):
 
 
 def test_commit_is_a_no_op_when_nothing_changed(solo):
-    trees = trees_mod.create(solo, "task-1")
+    trees = trees_mod.create(solo, "task-1", "feat/task-1")
     assert execute.commit(trees, "no changes") == {}
 
 
 def test_each_iteration_commits_under_its_own_intent(solo):
     """A pivot's commit must describe the pivot, not the feature it belongs to."""
-    trees = trees_mod.create(solo, "task-1")
+    trees = trees_mod.create(solo, "task-1", "feat/task-1")
     path = trees.by_name("api").path
 
     (path / "api.py").write_text("def divide(a, b):\n    return a // b\n")
@@ -71,7 +71,7 @@ def test_each_iteration_commits_under_its_own_intent(solo):
 
 def test_a_cross_repo_change_commits_in_each_repo_under_one_subject(duo):
     """The shared subject is how a reviewer recognises the branches as one change."""
-    trees = trees_mod.create(duo, "task-1")
+    trees = trees_mod.create(duo, "task-1", "feat/task-1")
     (trees.by_name("api").path / "api.py").write_text("def v2(): ...\n")
     (trees.by_name("web").path / "web.py").write_text("from api import v2\n")
 
@@ -84,7 +84,7 @@ def test_a_cross_repo_change_commits_in_each_repo_under_one_subject(duo):
 
 
 def test_untouched_repos_are_not_committed(duo):
-    trees = trees_mod.create(duo, "task-1")
+    trees = trees_mod.create(duo, "task-1", "feat/task-1")
     (trees.by_name("api").path / "api.py").write_text("y = 2\n")
 
     assert set(execute.commit(trees, "only the api")) == {"api"}
@@ -92,7 +92,7 @@ def test_untouched_repos_are_not_committed(duo):
 
 def test_the_agent_is_granted_every_worktree(duo):
     """cwd is the feature root so repos are siblings; each worktree is granted explicitly."""
-    trees = trees_mod.create(duo, "task-1")
+    trees = trees_mod.create(duo, "task-1", "feat/task-1")
     prompt = execute.render_prompt(PLAN, trees)
 
     assert "api/" in prompt and "web/" in prompt

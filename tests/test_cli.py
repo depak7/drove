@@ -43,7 +43,7 @@ def test_init_refuses_non_git_directory(tmp_path):
 
 
 def test_reclaim_removes_a_merged_features_worktrees(duo):
-    trees = tree.create(duo, "task-1")
+    trees = tree.create(duo, "task-1", "feat/task-1")
     for worktree in trees:
         (worktree.path / "feature.py").write_text("y = 2\n")
         git.git(worktree.path, "add", "-A")

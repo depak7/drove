@@ -73,7 +73,7 @@ def feature(state):
     repo = make_repo(state / "projects", "api")
     with db.connect() as conn:
         space = ws_mod.create(conn, "solo", [repo])
-    trees = trees_mod.create(space, "abc123", "dv/abc123")
+    trees = trees_mod.create(space, "abc123", "feat/abc123")
     tree = trees.trees[0]
     (tree.path / "new.py").write_text("y = 2\n")
     git.git(tree.path, "add", "-A")
@@ -101,11 +101,11 @@ def test_pushing_publishes_the_branch_and_sets_upstream(feature, tmp_path):
     assert result.error is None
     # The branch is really there, with the commit on it.
     landed = subprocess.run(
-        ["git", "-C", str(upstream), "rev-parse", "dv/abc123"],
+        ["git", "-C", str(upstream), "rev-parse", "feat/abc123"],
         capture_output=True, text=True,
     )
     assert landed.returncode == 0
-    assert git.git(feature.path, "rev-parse", "dv/abc123") == landed.stdout.strip()
+    assert git.git(feature.path, "rev-parse", "feat/abc123") == landed.stdout.strip()
     # A bare path is not a website, so there is no link to offer — and none is invented.
     assert result.url is None
 
@@ -132,12 +132,12 @@ def test_pushing_refuses_to_clobber_someone_elses_work_on_the_branch(feature, tm
     other = tmp_path / "other"
     subprocess.run(["git", "clone", "-q", str(upstream), str(other)], check=True)
     for args in (["config", "user.email", "o@b.c"], ["config", "user.name", "o"],
-                 ["checkout", "-q", "dv/abc123"]):
+                 ["checkout", "-q", "feat/abc123"]):
         subprocess.run(["git", "-C", str(other), *args], check=True)
     (other / "theirs.py").write_text("z = 3\n")
     git.git(other, "add", "-A")
     git.git(other, "commit", "-qm", "theirs")
-    git.git(other, "push", "-q", "origin", "dv/abc123")
+    git.git(other, "push", "-q", "origin", "feat/abc123")
 
     git.git(feature.path, "commit", "-q", "--amend", "-m", "reworded")
     result = remote.push(feature)

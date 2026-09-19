@@ -136,7 +136,9 @@ def test_creating_a_feature_makes_a_worktree_per_repo_and_starts_planning(client
     ws = new_workspace(client, repos=("api", "web"))
     feature = new_feature(client, ws)
 
-    assert feature["branch"].startswith("dv/")
+    # The branch is named from the request, not from the feature id: it is what ends up in
+    # `git branch` and in someone else's review queue.
+    assert feature["branch"] == "feat/add-a-thing"
     assert feature["workspace_id"] == ws["id"]
     assert client.started[0][0] == "plan"
 

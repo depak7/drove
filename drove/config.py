@@ -10,23 +10,7 @@ from pathlib import Path
 
 HOME = Path(os.environ.get("DROVE_HOME", Path.home() / ".drove"))
 REPO_CONFIG = ".drove.toml"
-LEGACY_REPO_CONFIG = ".vorflux.toml"
 
-
-def migrate_home() -> str | None:
-    """Move state from the product's former name, once.
-
-    Called at startup. Only ever moves when the new location does not exist, so it cannot clobber
-    a real state directory, and it is a rename rather than a copy so nothing is duplicated.
-    """
-    if HOME.exists():
-        return None
-    legacy = Path(os.environ.get("VORFLUX_HOME", Path.home() / ".vorflux"))
-    if not legacy.exists() or legacy == HOME:
-        return None
-    HOME.parent.mkdir(parents=True, exist_ok=True)
-    legacy.rename(HOME)
-    return str(legacy)
 
 DEFAULT_HARNESSES = {
     "plan": "claude",
@@ -54,8 +38,6 @@ class RepoConfig:
     @classmethod
     def load(cls, root: Path) -> RepoConfig:
         path = root / REPO_CONFIG
-        if not path.exists() and (root / LEGACY_REPO_CONFIG).exists():
-            path = root / LEGACY_REPO_CONFIG
         data: dict = {}
         if path.exists():
             data = tomllib.loads(path.read_text())

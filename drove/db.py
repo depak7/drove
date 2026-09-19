@@ -15,150 +15,59 @@ import os
 import sqlite3
 import time
 import uuid
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from pathlib import Path
 from typing import Any
 
 from drove import config
 
-MIGRATIONS: list[str] = [
-    # 1
-    """
-    CREATE TABLE features (
-        id            TEXT PRIMARY KEY,
-        repo          TEXT NOT NULL,
-        title         TEXT NOT NULL,
-        branch        TEXT NOT NULL,
-        worktree_path TEXT NOT NULL,
-        base_branch   TEXT NOT NULL,
-        status        TEXT NOT NULL,
-        created_at    REAL NOT NULL
-    );
-    CREATE TABLE runs (
-        id         TEXT PRIMARY KEY,
-        feature_id TEXT NOT NULL REFERENCES features(id) ON DELETE CASCADE,
-        iteration  INTEGER NOT NULL,
-        intent     TEXT NOT NULL,
-        plan_json  TEXT,
-        head_sha   TEXT,
-        status     TEXT NOT NULL,
-        started_at REAL NOT NULL,
-        ended_at   REAL
-    );
-    CREATE TABLE sessions (
-        run_id     TEXT NOT NULL REFERENCES runs(id) ON DELETE CASCADE,
-        stage      TEXT NOT NULL,
-        attempt    INTEGER NOT NULL DEFAULT 1,
-        harness    TEXT NOT NULL,
-        session_id TEXT NOT NULL,
-        cwd        TEXT NOT NULL,
-        tokens_in  INTEGER NOT NULL DEFAULT 0,
-        tokens_out INTEGER NOT NULL DEFAULT 0,
-        cost_usd   REAL,
-        PRIMARY KEY (run_id, stage, attempt)
-    );
-    CREATE INDEX runs_by_feature ON runs(feature_id, iteration);
-    """,
-    # 2 — workspaces. A workspace is a named set of repos worked on together, so a feature can
-    # change an API in one repo and its caller in another. Schema only; existing rows are
-    # backfilled by _backfill_workspaces, because deriving a repo's name from its path is a
-    # basename operation and SQLite has no clean way to express one.
-    """
-    CREATE TABLE workspaces (
-        id         TEXT PRIMARY KEY,
-        name       TEXT NOT NULL,
-        harness    TEXT,
-        created_at REAL NOT NULL
-    );
-    CREATE TABLE workspace_repos (
-        workspace_id TEXT NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
-        path         TEXT NOT NULL,
-        name         TEXT NOT NULL,
-        base_branch  TEXT NOT NULL,
-        added_at     REAL NOT NULL,
-        PRIMARY KEY (workspace_id, path)
-    );
-    ALTER TABLE features ADD COLUMN workspace_id TEXT REFERENCES workspaces(id);
-    CREATE INDEX features_by_workspace ON features(workspace_id);
-    """,
-    # 3 — which model each stage runs. Null means "let the CLI decide", which stays the default:
-    # pinning a model id in config is how a workspace silently breaks when a provider retires one.
-    """
-    ALTER TABLE workspaces ADD COLUMN models TEXT;
-    """,
-    # 4 — why a run failed. It was emitted over SSE and nowhere else, so refreshing the page lost
-    # the only account of what went wrong.
-    """
-    ALTER TABLE runs ADD COLUMN error TEXT;
-    """,
-    # 5 — which process owns a run. Job state lives in memory, so a daemon that dies takes with it
-    # the only record that work was in flight, leaving the row claiming to run forever. The pid
-    # makes that recoverable: at startup a run whose owner is gone is provably orphaned, while one
-    # owned by a live `drove execute` in a terminal is left alone.
-    """
-    ALTER TABLE runs ADD COLUMN owner_pid INTEGER;
-    """,
-]
-
-# Data migrations that need real code. Keyed by the schema version they run after.
-AFTER: dict[int, str] = {2: "_backfill_workspaces"}
+# Migrations live one-per-file in drove/migrations/, applied in filename order, and the index is
+# the schema version. They are append-only: a schema is not a desired state you declare, it is the
+# sequence of transformations already applied to databases that exist in the world. Someone on
+# version 3 gets to 5 by running exactly 004 and 005, in that order, forever — so editing a
+# migration that has shipped is the one mistake that cannot be undone from here.
+MIGRATIONS_DIR = Path(__file__).parent / "migrations"
 
 
-LEGACY_DB = "vorflux.db"
+def migrations() -> list[tuple[str, str]]:
+    """(name, sql) for every migration, in version order.
+
+    Sorted by filename, which is why they are numbered: lexical order and application order have
+    to be the same thing, and `010` must not sort before `2`.
+    """
+    return [(path.name, path.read_text()) for path in sorted(MIGRATIONS_DIR.glob("*.sql"))]
 
 
-def _is_empty(db_file: Path) -> bool:
-    """True for a database with no workspaces and no features — nothing worth keeping."""
-    try:
-        conn = sqlite3.connect(f"file:{db_file}?mode=ro", uri=True)
-    except sqlite3.Error:
-        return False
-    try:
-        rows = conn.execute(
-            "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name IN"
-            " ('workspaces','features')"
-        ).fetchone()[0]
-        if rows < 2:
-            return True
-        counts = conn.execute(
-            "SELECT (SELECT COUNT(*) FROM workspaces) + (SELECT COUNT(*) FROM features)"
-        ).fetchone()[0]
-        return counts == 0
-    except sqlite3.Error:
-        return False
-    finally:
-        conn.close()
+def _backfill_workspaces(conn: sqlite3.Connection) -> None:
+    """Give every pre-workspace feature the one-repo workspace it always implicitly had."""
+    rows = conn.execute("SELECT DISTINCT repo, base_branch FROM features").fetchall()
+    for row in rows:
+        repo = Path(row["repo"])
+        workspace_id = new_id()
+        now = time.time()
+        conn.execute(
+            "INSERT INTO workspaces (id, name, harness, created_at) VALUES (?,?,?,?)",
+            (workspace_id, repo.name or str(repo), None, now),
+        )
+        conn.execute(
+            "INSERT INTO workspace_repos (workspace_id, path, name, base_branch, added_at)"
+            " VALUES (?,?,?,?,?)",
+            (workspace_id, str(repo), repo.name or "repo", row["base_branch"], now),
+        )
+        conn.execute(
+            "UPDATE features SET workspace_id = ? WHERE repo = ?", (workspace_id, str(repo))
+        )
+
+
+# Data migrations that need real code, keyed by the schema version they run after. The callable
+# itself, not its name: a typo in a string is found by whoever next upgrades a real database,
+# which is the worst possible moment and the worst possible person.
+AFTER: dict[int, Callable[[sqlite3.Connection], None]] = {2: _backfill_workspaces}
 
 
 def path() -> Path:
-    """The database file, adopting one left by the product's former name.
-
-    The rename changed the filename as well as the directory, so without this an existing install
-    opens a fresh empty database and every workspace appears to have vanished while the old file
-    sits beside it.
-
-    The empty check matters: anyone who launched once after upgrading already has a blank
-    drove.db, and a plain "does it exist" test would decide the migration was done and strand
-    their real data forever. An empty database has nothing to lose, so it is set aside.
-    """
-    current = config.HOME / "drove.db"
-    legacy = config.HOME / LEGACY_DB
-
-    if not legacy.exists() or _is_empty(legacy):
-        return current
-
-    if current.exists():
-        if not _is_empty(current):
-            return current  # real data on both sides — never merge, never clobber
-        current.rename(current.with_suffix(".db.superseded"))
-
-    legacy.rename(current)
-    for suffix in ("-wal", "-shm"):
-        sidecar = config.HOME / f"{LEGACY_DB}{suffix}"
-        if sidecar.exists():
-            sidecar.rename(config.HOME / f"drove.db{suffix}")
-    return current
+    return config.HOME / "drove.db"
 
 
 @contextmanager
@@ -184,33 +93,17 @@ def connect() -> Iterator[sqlite3.Connection]:
 
 def migrate(conn: sqlite3.Connection) -> None:
     version = conn.execute("PRAGMA user_version").fetchone()[0]
-    for index, sql in enumerate(MIGRATIONS[version:], start=version + 1):
-        conn.executescript(sql)
+    for index, (name, sql) in enumerate(migrations()[version:], start=version + 1):
+        try:
+            conn.executescript(sql)
+        except sqlite3.Error as exc:
+            # Name the file. A migration failure otherwise reports a line number inside a script
+            # the reader cannot see, on a database they now cannot open.
+            raise sqlite3.Error(f"migration {name} failed: {exc}") from exc
         if step := AFTER.get(index):
-            globals()[step](conn)
+            step(conn)
         conn.execute(f"PRAGMA user_version = {index}")
     conn.commit()
-
-
-def _backfill_workspaces(conn: sqlite3.Connection) -> None:
-    """Give every pre-workspace feature the one-repo workspace it always implicitly had."""
-    rows = conn.execute("SELECT DISTINCT repo, base_branch FROM features").fetchall()
-    for row in rows:
-        repo = Path(row["repo"])
-        workspace_id = new_id()
-        now = time.time()
-        conn.execute(
-            "INSERT INTO workspaces (id, name, harness, created_at) VALUES (?,?,?,?)",
-            (workspace_id, repo.name or str(repo), None, now),
-        )
-        conn.execute(
-            "INSERT INTO workspace_repos (workspace_id, path, name, base_branch, added_at)"
-            " VALUES (?,?,?,?,?)",
-            (workspace_id, str(repo), repo.name or "repo", row["base_branch"], now),
-        )
-        conn.execute(
-            "UPDATE features SET workspace_id = ? WHERE repo = ?", (workspace_id, str(repo))
-        )
 
 
 def new_id() -> str:
@@ -263,7 +156,7 @@ def find_feature(conn: sqlite3.Connection, ref: str) -> sqlite3.Row | None:
     return conn.execute(
         "SELECT * FROM features WHERE id LIKE ? OR branch = ? OR branch = ?"
         " ORDER BY created_at DESC LIMIT 1",
-        (f"{ref}%", ref, f"vf/{ref}"),
+        (f"{ref}%", ref, f"%/{ref}"),
     ).fetchone()
 
 

@@ -26,7 +26,7 @@ def blocked(why="off-by-one in the retry count"):
 
 @pytest.fixture
 def trees(solo):
-    return trees_mod.create(solo, "task-1")
+    return trees_mod.create(solo, "task-1", "feat/task-1")
 
 
 def stub_stages(monkeypatch, verdicts, committed=True, executes=None):

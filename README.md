@@ -42,6 +42,11 @@ feature in one and finish it in the other. The one thing the daemon adds is that
 becomes a state rather than a blocking prompt, so several features can sit waiting on you at once
 while others run.
 
+Branches are named from your request — `feat/add-cancel-for-an-in-flight-run`, `fix/login-bug`,
+`docs/publishing-flow` — because the branch is what ends up in `git branch`, in a pull request
+title and in someone else's review queue. The name is minted once, at creation, and never changes
+under you.
+
 Each feature gets its own worktrees under `~/.drove/worktrees/<workspace>/<feature>/`, one per
 repo, side by side — so runs never collide and your own checkouts are never touched. A worktree is
 removed only once its commits are in that repo's base branch; unintegrated work is preserved and

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import sqlite3
 from pathlib import Path
 
 import pytest
@@ -19,7 +20,7 @@ def conn(tmp_path, monkeypatch):
 def make_feature(conn, title="add oauth", fid=None):
     fid = fid or db.new_id()
     db.create_feature(
-        conn, Path("/repo"), title, f"vf/{fid}", Path(f"/wt/{fid}"), "main", feature_id=fid
+        conn, Path("/repo"), title, f"feat/{fid}", Path(f"/wt/{fid}"), "main", feature_id=fid
     )
     return fid
 
@@ -29,7 +30,7 @@ def test_migrations_are_idempotent(tmp_path, monkeypatch):
     with db.connect() as c:
         first = c.execute("PRAGMA user_version").fetchone()[0]
     with db.connect() as c:
-        assert c.execute("PRAGMA user_version").fetchone()[0] == first == len(db.MIGRATIONS)
+        assert c.execute("PRAGMA user_version").fetchone()[0] == first == len(db.migrations())
 
 
 def test_runs_iterate_within_a_feature(conn):
@@ -52,7 +53,7 @@ def test_find_feature_accepts_id_prefix_or_branch(conn):
     fid = make_feature(conn)
     assert db.find_feature(conn, fid)["id"] == fid
     assert db.find_feature(conn, fid[:6])["id"] == fid
-    assert db.find_feature(conn, f"vf/{fid}")["id"] == fid
+    assert db.find_feature(conn, f"feat/{fid}")["id"] == fid
     assert db.find_feature(conn, "nope") is None
 
 
@@ -164,3 +165,33 @@ def test_reconciling_keeps_the_commit_a_run_reached(conn):
     db.reconcile_interrupted(conn)
 
     assert db.latest_run(conn, fid)["head_sha"] == "abc1234"
+
+
+def test_every_migration_file_is_numbered_in_order():
+    """Filename order is application order, so the numbering has to be lexical, not arithmetic.
+
+    `10_x.sql` sorting before `2_x.sql` would silently apply a later migration first and record
+    the wrong version — the kind of break that only shows up on someone else's database.
+    """
+    names = [name for name, _ in db.migrations()]
+    assert names == sorted(names)
+    prefixes = [name.split("_")[0] for name in names]
+    assert prefixes == [f"{i:03d}" for i in range(1, len(names) + 1)]
+
+
+def test_a_data_migration_is_registered_as_a_callable_not_a_name():
+    """A name resolved at runtime fails on the next real upgrade; an import fails immediately."""
+    for version, step in db.AFTER.items():
+        assert callable(step), f"migration {version} data step is not callable"
+        assert isinstance(version, int)
+
+
+def test_every_migration_is_valid_sql(tmp_path):
+    """Each file runs standalone, in order, against an empty database."""
+    conn = sqlite3.connect(tmp_path / "probe.db")
+    for name, sql in db.migrations():
+        try:
+            conn.executescript(sql)
+        except sqlite3.Error as exc:  # pragma: no cover - only on a broken migration
+            raise AssertionError(f"{name} is not valid SQL: {exc}") from exc
+    conn.close()

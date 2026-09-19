@@ -6,10 +6,11 @@ be kept in sync between a "simple" and a "multi-repo" implementation.
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 from pathlib import Path
 
-from drove.config import slug
+from drove.config import provisional_title, slug
 from drove.vcs import git
 from drove.workspace import Repo, Workspace
 
@@ -61,24 +62,105 @@ class FeatureTrees:
         return [t for t in self.trees if git.is_dirty(t.path) or unintegrated(t)]
 
 
-BRANCH_PREFIX = "dv/"
+# What kind of change this is, inferred from the words people actually use. Ordered: the first
+# match wins, so specific kinds come before the catch-all. Matched on word boundaries, because
+# "prefix" is not a fix and "contest" is not a test.
+BRANCH_KINDS: tuple[tuple[str, tuple[str, ...]], ...] = (
+    ("fix", ("fix", "bug", "broken", "crash", "regress", "fails", "failing", "error", "wrong")),
+    ("docs", ("document", "documentation", "docs", "readme", "changelog")),
+    ("test", ("test", "tests", "coverage", "flaky")),
+    ("refactor", ("refactor", "restructure", "extract", "simplify", "clean up", "tidy")),
+    ("chore", ("bump", "upgrade", "pin", "rename", "delete", "drop")),
+)
+DEFAULT_KIND = "feat"
+
+# Long enough to be a sentence you recognise, short enough to read in a terminal prompt and a
+# `git branch` listing without wrapping.
+MAX_BRANCH_SLUG = 48
 
 
-def branch_for(feature_id: str) -> str:
-    return f"{BRANCH_PREFIX}{slug(feature_id)}"
+def _kind(task: str) -> str:
+    """feat / fix / docs / ... from the request itself."""
+    text = " ".join(task.lower().split())[:160]
+    for kind, words in BRANCH_KINDS:
+        # Both boundaries, plus the ordinary inflections. Leading-only matched "fixtures" as a
+        # fix and would have matched "contested" as a test.
+        if any(re.search(rf"\b{re.escape(word)}(s|es|ed|ing)?\b", text) for word in words):
+            return kind
+    return DEFAULT_KIND
 
 
-def create(workspace: Workspace, feature_id: str, branch: str | None = None) -> FeatureTrees:
+def _slugify(text: str, limit: int = MAX_BRANCH_SLUG) -> str:
+    """Lowercase words joined by hyphens, cut at a word boundary.
+
+    Deliberately narrower than `config.slug`: git accepts dots and underscores in a branch name,
+    but `..`, a trailing `.lock` and a leading `.` are all refused, and the rules are fiddly
+    enough that restricting to [a-z0-9-] is easier to be sure about than encoding them.
+    """
+    out = re.sub(r"[^a-z0-9]+", "-", text.lower()).strip("-")
+    if len(out) > limit:
+        out = out[:limit].rsplit("-", 1)[0] or out[:limit]
+    return out.strip("-") or "change"
+
+
+# Left stranded once the leading verb is dropped: "fix the login bug" should read `fix/login-bug`,
+# and "tests for the reconciliation" should read `test/reconciliation`.
+_FILLER = ("the", "a", "an", "this", "that", "my", "our", "for", "of", "to", "in", "on")
+
+
+def _undouble(kind: str, title: str) -> str:
+    """Drop a leading verb the prefix already says, so `fix/fix-the-x` reads `fix/x`."""
+    words = title.split()
+    triggers = dict(BRANCH_KINDS).get(kind, ())
+    if not words or words[0].lower().rstrip(":,") not in triggers:
+        return title
+    words = words[1:]
+    # At most two: enough for "for the", not enough to eat the subject of a terse request.
+    for _ in range(2):
+        if words and words[0].lower() in _FILLER:
+            words = words[1:]
+    return " ".join(words) or title
+
+
+def branch_for(task: str) -> str:
+    """A branch name a person can read: `feat/add-cancel-for-an-in-flight-run`.
+
+    Named from the request rather than the feature id, because the branch is the thing that ends
+    up in `git branch`, in a pull request title and in someone else's review queue — and
+    `dv/f31c59bc0e85` tells that reader nothing at all.
+
+    Minted once, at creation, and never renamed. The planner produces a better title a minute
+    later, but by then the branch may already exist in three worktrees and on a remote, and a
+    branch that changes name under you is worse than one that is merely approximate.
+    """
+    kind = _kind(task)
+    return f"{kind}/{_slugify(_undouble(kind, provisional_title(task)))}"
+
+
+def unique_branch(workspace: Workspace, task: str, feature_id: str) -> str:
+    """`branch_for`, guaranteed free in every repo of the workspace.
+
+    Two features can legitimately be asked for in the same words. The feature id disambiguates
+    them, which keeps the suffix stable and meaningful rather than a counter that depends on the
+    order things happened to be created in.
+    """
+    name = branch_for(task)
+    if any(git.branch_exists(repo.path, name) for repo in workspace.repos):
+        return f"{name}-{slug(feature_id)[:6]}"
+    return name
+
+
+def create(workspace: Workspace, feature_id: str, branch: str) -> FeatureTrees:
     """Check out every repo in the workspace side by side under one feature root.
 
-    `branch` is passed by callers that already have the feature's recorded branch, so a feature
-    created before the branch prefix changed keeps the branch its commits are actually on.
+    `branch` is always given, never derived here: a new feature's name comes from its request via
+    `unique_branch`, and an existing one's comes from the database — because a branch may already
+    carry commits, exist in three worktrees and be pushed, and must never be recomputed.
     """
     if not workspace.repos:
         raise WorktreeError(f"workspace {workspace.name!r} has no repositories")
 
     root = workspace.feature_root(feature_id)
-    branch = branch or branch_for(feature_id)
     trees: list[Tree] = []
 
     for repo in workspace.repos:
@@ -109,7 +191,8 @@ def attach(workspace: Workspace, feature_id: str, branch: str | None = None) -> 
         raise WorktreeError(f"workspace {workspace.name!r} has no repositories")
 
     root = workspace.feature_root(feature_id)
-    branch = branch or branch_for(feature_id)
+    if not branch:
+        raise WorktreeError(f"feature {feature_id} has no branch name")
     return FeatureTrees(
         root=root,
         trees=[

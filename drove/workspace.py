@@ -5,7 +5,7 @@ so the agent sees them as sibling directories and can change an API in one repo 
 another within a single change.
 
     ~/.drove/worktrees/<workspace>/<feature-id>/
-        api/     ← worktree of repo A on branch vf/<feature-id>
+        api/     ← worktree of repo A on the feature branch
         web/     ← worktree of repo B on the same branch
 
 One repo is the ordinary case and is simply N=1; every operation here is a loop over repos so

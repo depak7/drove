@@ -436,7 +436,7 @@ def create_feature(body: NewFeature) -> dict[str, Any]:
         ws = _workspace(conn, body.workspace_id)
         if not ws.repos:
             raise HTTPException(400, f"workspace {ws.name!r} has no repositories yet")
-        trees = trees_mod.create(ws, feature_id)
+        trees = trees_mod.create(ws, feature_id, trees_mod.unique_branch(ws, body.task, feature_id))
         primary = trees.trees[0]
         db.create_feature(
             conn, primary.repo.path, provisional_title(body.task), trees.branch, trees.root,

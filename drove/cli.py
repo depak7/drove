@@ -9,7 +9,7 @@ from pathlib import Path
 
 import typer
 
-from drove import __version__, config, db, evidence, landed, ui
+from drove import __version__, db, evidence, landed, ui
 from drove.config import HOME, REPO_CONFIG, TEMPLATE, provisional_title
 from drove.harness import registry
 from drove.pipeline.engine import RunOutcome, run_cycle
@@ -260,7 +260,7 @@ def plan_cmd(
     tree.prune(ws)
 
     feature_id = db.new_id()
-    trees = tree.create(ws, feature_id)
+    trees = tree.create(ws, feature_id, tree.unique_branch(ws, task, feature_id))
     primary = trees.trees[0]
     with db.connect() as conn:
         db.create_feature(
@@ -606,8 +606,6 @@ def serve(
 
 
 def main() -> None:
-    if moved := config.migrate_home():
-        typer.secho(f"moved state from {moved} to {config.HOME}", fg=ui.DIM, err=True)
     app()
 
 
