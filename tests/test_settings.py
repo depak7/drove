@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 import pytest
@@ -110,19 +111,59 @@ def test_no_model_flag_is_sent_when_none_is_chosen(state):
 
 # --- what the picker can honestly offer -------------------------------------------------
 
-def test_model_lists_come_from_the_cli_catalogue_not_a_hardcoded_table():
-    """Both CLIs cache the catalogue they were served; read it rather than inventing one."""
+# Both CLIs cache the catalogue they were served. These tests supply that cache rather than
+# reading the developer's own, because a machine with no coding CLIs installed — CI, or a
+# contributor's first clone — would otherwise fail on facts about somebody else's laptop.
+CLAUDE_CACHE = {
+    "catalog": {"config": {"models": [
+        {"id": "claude-fixture-opus", "short_name": "Fixture Opus", "description": "for tests"},
+        {"id": "claude-fixture-haiku", "name": "Fixture Haiku"},
+        {"id": "", "short_name": "no id at all"},
+    ]}}
+}
+CODEX_CACHE = {"models": [
+    {"slug": "gpt-fixture", "display_name": "Fixture GPT", "description": "for tests"},
+    {"slug": "codex-auto-review", "visibility": "hide"},
+    {"slug": "gpt-reserve", "visibility": "hide"},
+]}
+
+
+@pytest.fixture
+def catalogues(tmp_path, monkeypatch):
+    """A home directory holding exactly the caches these CLIs write."""
+    home = tmp_path / "home"
+    folder = home / ".claude" / "cache" / "model-catalog"
+    folder.mkdir(parents=True)
+    (folder / "catalog.json").write_text(json.dumps(CLAUDE_CACHE))
+    (home / ".codex").mkdir(parents=True)
+    (home / ".codex" / "models_cache.json").write_text(json.dumps(CODEX_CACHE))
+    monkeypatch.setattr(Path, "home", classmethod(lambda cls: home))
+    return home
+
+
+def test_model_lists_come_from_the_cli_catalogue_not_a_hardcoded_table(catalogues):
+    """The proof is that ids only present in the cache come back out of it."""
+    claude = {m["id"] for m in registry.list_models("claude")}
+    codex = {m["id"] for m in registry.list_models("codex")}
+
+    assert "claude-fixture-opus" in claude
+    assert "gpt-fixture" in codex
     for name in ("claude", "codex"):
-        models = registry.list_models(name)
-        assert models, f"{name} offered nothing"
-        for m in models:
+        for m in registry.list_models(name):
             assert m["id"] and m["label"]
             assert isinstance(m["note"], str)
 
     assert registry.list_models("nope") == []
 
 
-def test_enumerating_models_never_launches_anything(monkeypatch):
+def test_a_cli_that_never_cached_a_catalogue_still_offers_something(tmp_path, monkeypatch):
+    """A fresh install has no cache, and an empty model picker looks like a broken screen."""
+    monkeypatch.setattr(Path, "home", classmethod(lambda cls: tmp_path / "empty"))
+
+    assert [m["id"] for m in registry.list_models("claude")] == ["opus", "sonnet", "haiku"]
+
+
+def test_enumerating_models_never_launches_anything(catalogues, monkeypatch):
     """`lms ls` starts LM Studio, so opening the settings screen booted an application.
 
     Those models were unusable anyway: driving one through codex needs --oss --local-provider,
@@ -137,9 +178,11 @@ def test_enumerating_models_never_launches_anything(monkeypatch):
     assert not hasattr(registry, "local_models"), "the lms probe should be gone entirely"
 
 
-def test_codex_hides_its_internal_models():
+def test_codex_hides_its_internal_models(catalogues):
     """The cache marks an auto-review model and a reserve pool as `hide`; the CLI omits them."""
     ids = {m["id"] for m in registry.list_models("codex")}
+
+    assert "gpt-fixture" in ids, "the visible one must survive, or this proves nothing"
     assert "codex-auto-review" not in ids
     assert "gpt-reserve" not in ids
 
@@ -154,19 +197,44 @@ def test_harness_endpoint_reports_what_each_one_can_do(client):
 
 # --- discovery must not depend on a shell PATH -------------------------------------------
 
-def test_clis_are_found_without_a_shell_path(monkeypatch):
+def test_clis_are_found_without_a_shell_path(tmp_path, monkeypatch):
     """A GUI-launched daemon gets /usr/local/bin:/bin:/usr/bin and none of these are on it.
 
     Relying on PATH alone made the app report every harness as missing and hand the settings
     screen an empty model list, while the binaries sat in ~/.local/bin.
+
+    The directories are planted rather than read from this machine: the bug is that PATH is not
+    consulted, and proving that needs a binary somewhere off PATH — not a laptop that happens to
+    have one.
     """
-    monkeypatch.setattr(registry.shutil, "which", lambda _: None)
+    bindir = tmp_path / "somewhere" / "bin"
+    bindir.mkdir(parents=True)
+    installed = bindir / "claude"
+    installed.write_text("#!/bin/sh\nexit 0\n")
+    installed.chmod(0o755)
+
+    monkeypatch.setattr(registry.shutil, "which", lambda _: None)  # nothing on PATH at all
+    monkeypatch.setattr(registry, "EXTRA_BIN_DIRS", (bindir,))
 
     found = {name: registry.which(name) for name in registry.PRESETS}
-    assert any(found.values()), f"nothing resolved outside PATH: {found}"
-    for name, path in found.items():
-        if path:
-            assert Path(path).is_absolute(), f"{name} must resolve to an absolute path"
+
+    assert found["claude"] == str(installed)
+    assert Path(found["claude"]).is_absolute()
+    assert found["codex"] is None, "only what is really there may be reported as found"
+
+
+def test_a_directory_entry_that_is_not_executable_is_not_a_cli(tmp_path, monkeypatch):
+    """A same-named data file or directory must not be reported as an installed harness."""
+    bindir = tmp_path / "bin"
+    bindir.mkdir()
+    (bindir / "claude").write_text("notes, not a binary")   # present, not executable
+    (bindir / "codex").mkdir()                              # a directory wearing the name
+
+    monkeypatch.setattr(registry.shutil, "which", lambda _: None)
+    monkeypatch.setattr(registry, "EXTRA_BIN_DIRS", (bindir,))
+
+    assert registry.which("claude") is None
+    assert registry.which("codex") is None
 
 
 def test_get_returns_a_harness_bound_to_an_absolute_binary():
