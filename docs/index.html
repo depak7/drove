@@ -125,154 +125,199 @@ footer .row{flex-wrap:wrap;gap:8px 18px}
     </span>
     <nav class="nav">
       <a href="#how">How it works</a>
-      <a href="#use">What for</a>
-      <a href="#honest">Limits</a>
+      <a href="#use">Good for</a>
+      <a href="#honest">Where it falls down</a>
       <a href="https://github.com/depak7/drove">GitHub</a>
     </nav>
   </header>
 
   <section class="hero">
-    <h1>Describe a feature. Approve one plan. Come back to a <em>reviewed branch</em>.</h1>
+    <h1>Say what you want. Approve the plan. Come back to a <em>reviewed branch</em>.</h1>
     <p>
-      Drove runs a disciplined build–review–verify cycle on your own machine, using the coding
-      CLIs you already have installed and logged in. No API keys. No cloud service. No second
-      subscription.
+      Drove runs on your laptop, using the coding CLIs you're already paying for. Claude, Codex,
+      opencode. There's no API key to paste and no account to make. If you can run
+      <code>claude</code> in a terminal today, you can run this.
     </p>
 
     <div class="cta">
-      <a class="btn primary" href="https://github.com/depak7/drove#install">Install</a>
-      <a class="btn" href="https://github.com/depak7/drove">Read the source</a>
+      <a class="btn primary" href="https://github.com/depak7/drove#install">Install it</a>
+      <a class="btn" href="https://github.com/depak7/drove">Read the code</a>
     </div>
 
     <div class="pipe" aria-label="the pipeline">
-      <div class="step"><b>Plan</b><span>reads your code, writes a typed plan</span></div>
-      <div class="step gate"><b>⏸ You approve</b><span>the only place it waits</span></div>
-      <div class="step live"><b>Execute</b><span>on an isolated worktree</span></div>
-      <div class="step live"><b>Review</b><span>a <em>different</em> model judges the diff</span></div>
-      <div class="step live"><b>Verify</b><span>your own build and tests</span></div>
-      <div class="step done"><b>Deliver</b><span>branch, link, evidence pack</span></div>
+      <div class="step"><b>Plan</b><span>it reads your code first</span></div>
+      <div class="step gate"><b>⏸ You approve</b><span>the only place it stops</span></div>
+      <div class="step live"><b>Build</b><span>on its own worktree</span></div>
+      <div class="step live"><b>Review</b><span>a <em>different</em> model reads the diff</span></div>
+      <div class="step live"><b>Verify</b><span>your build, your tests</span></div>
+      <div class="step done"><b>Done</b><span>branch, link, write-up</span></div>
     </div>
   </section>
 
   <section id="how">
-    <h2>The model that wrote it never grades its own homework</h2>
+    <h2>The model that wrote the code doesn't get to mark it</h2>
     <p class="lede">
-      That is the whole idea. A reviewer which has read the implementer's reasoning tends to
-      ratify it — so the reviewer runs in a fresh session every round and sees only what a human
-      reviewer sees: the diff, and the stated intent. Claude writes, Codex judges. Or the other
-      way round. You choose per stage.
+      This is the part I'd argue about. Ask one model to check its own work and it'll usually tell
+      you the work is fine — not because it's lying, but because it already believes the reasoning
+      that produced it. So Drove hands the diff to a completely different model, in a fresh
+      session, with none of the first one's thinking attached. Claude writes, Codex marks. Flip it
+      round if you prefer. The same bug found twice by two models that never spoke is worth
+      something.
     </p>
 
     <div class="two">
       <div>
-        <h3>Nothing runs in your checkout</h3>
+        <h3>It never touches the code you're editing</h3>
         <p>
-          Every feature gets its own git worktree per repository. Runs never collide, and your
-          working copy is never touched. A worktree is removed only once its commits are in the
-          base branch — unmerged work is preserved and the recovery command printed.
+          Every feature gets its own git worktree. Your actual checkout sits there untouched, and
+          you can keep working while a run is going. (This started as a safety thing. It turned
+          out to be the reason you can have four features running at once without them stepping on
+          each other.)
         </p>
       </div>
       <div>
-        <h3>One change, several repositories</h3>
+        <h3>One change, two repos</h3>
         <p>
-          A workspace is a named set of repos worked on together, so one feature can rename an
-          interface in your API and fix every caller in your web app, on a branch that shares a
-          name in both.
+          Rename something in your API and fix every caller in your web app, in one go, on a
+          branch with the same name in both. Most tools make you do this twice and hope you
+          remembered everything.
         </p>
       </div>
       <div>
-        <h3>Evidence, not a green tick</h3>
+        <h3>You get a write-up, not a thumbs up</h3>
         <p>
-          Every run writes a pack: what was asked, what changed, the reviewer's verdict each
-          round, your test output, cost, and the command to reopen any agent session. If one
-          model both wrote and reviewed, it says so.
+          What you asked for, what changed, what the reviewer said each round, your test output,
+          what it cost. And if the same model ended up writing <em>and</em> reviewing — say you've
+          only got one CLI installed — it says so instead of quietly letting you assume otherwise.
         </p>
       </div>
       <div>
-        <h3>Your hands stay on the wheel</h3>
+        <h3>You can get your hands in</h3>
         <p>
-          Read the diff file by file, browse the whole worktree, or open a real shell inside it
-          and run the tests yourself. Stop a run mid-flight; resume it later from where it
-          stopped.
+          Read the diff file by file. Browse the whole thing. Or open a terminal right there in the
+          worktree and run the tests yourself, because sometimes that's just faster than reading.
         </p>
       </div>
     </div>
   </section>
 
   <section id="use">
-    <h2>Best at the work you keep postponing</h2>
+    <h2>What it's actually good at</h2>
     <p class="lede">
-      Well-specified but tedious — where you already know what “done” looks like, and the cost is
-      the hour of typing rather than the thinking.
+      The jobs where you already know what "done" looks like and you just don't want to spend the
+      afternoon typing it.
     </p>
 
     <div class="grid">
       <div class="card">
-        <h3>Cross-repo renames</h3>
-        <p>One workspace, two worktrees, one branch name in both.</p>
-        <code class="say">rename greeting() in api and update every caller in web</code>
+        <h3>Renames that span repos</h3>
+        <p>The kind you keep putting off because it's twenty files in two places.</p>
+        <code class="say">rename greeting() in api, fix every caller in web</code>
       </div>
       <div class="card">
-        <h3>The tests you never wrote</h3>
-        <p>A second model reviews them, so it will not wave through tests that assert nothing.</p>
-        <code class="say">the payment module has no tests for refunds</code>
+        <h3>Tests you never wrote</h3>
+        <p>A second model reads them, so you don't get fifty tests that assert nothing.</p>
+        <code class="say">payments has no tests for refunds</code>
       </div>
       <div class="card">
-        <h3>Migrations you keep deferring</h3>
-        <p>Your own build and test commands gate delivery.</p>
-        <code class="say">upgrade to pydantic v2 and fix what breaks</code>
+        <h3>Upgrades that break things</h3>
+        <p>It runs your test suite before it'll call the job done.</p>
+        <code class="say">move to pydantic v2 and fix what breaks</code>
       </div>
       <div class="card">
-        <h3>Bugs from a stack trace</h3>
-        <p>Paste the trace. The plan comes back naming real files.</p>
+        <h3>A bug and a stack trace</h3>
+        <p>Paste the trace. The plan comes back naming real files, not guesses.</p>
         <code class="say">this fires when the session cookie expires</code>
       </div>
       <div class="card">
-        <h3>The frontend break tests cannot see</h3>
-        <p>Optional browser checks open the page after a run and screenshot it — a component that
-        throws on render is caught even though the build passed.</p>
+        <h3>The frontend bug tests can't see</h3>
+        <p>Turn on browser checks and it opens the page after the run. One component throwing on
+        render, build green, page blank — that one.</p>
       </div>
       <div class="card">
-        <h3>Several at once</h3>
-        <p>The approval gate is a state, not a prompt. Queue five in the morning, approve the
-        plans over coffee, come back to five reviewed branches.</p>
+        <h3>Five at once</h3>
+        <p>It waits for you at the plan, then gets on with it. Queue a few before coffee, approve
+        the plans, come back to branches.</p>
       </div>
     </div>
   </section>
 
   <section id="start">
-    <h2>Two commands</h2>
+    <h2>Two commands and you're going</h2>
     <p class="lede">
-      Run it from anywhere — Drove is one machine-wide daemon, not a per-project tool.
-      Repositories are pointed at, not run from.
+      Run it from wherever. It's one thing running on your machine, not something you install per
+      project — you point it at repos rather than running it inside them.
     </p>
-<pre><span class="c"># needs claude, codex or opencode already installed and logged in</span>
+<pre><span class="c"># you'll need claude, codex or opencode already installed and logged in</span>
 uv tool install git+https://github.com/depak7/drove
 drove serve   <span class="c">→ http://localhost:8787</span></pre>
   </section>
 
   <section id="honest">
-    <h2>What it does not do</h2>
+    <h2>Where it falls down</h2>
     <p class="lede">
-      Stated here rather than discovered later.
+      You'd find all of this out in a week anyway. Better you hear it now.
     </p>
-    <ul class="plain">
-      <li>It cannot decide <em>what</em> to build. You approve the plan; if you cannot tell whether
-        the plan is right, nothing downstream saves you.</li>
-      <li>Cross-repo branches do not merge atomically. They share a name and must be merged
-        together — the evidence pack says so, but nothing can enforce it.</li>
-      <li>After two failed review rounds it stops and asks you, rather than asking a third model
-        to break the tie. That stage is designed, not built.</li>
-      <li>The macOS app is unsigned today, so it installs from source rather than a download.</li>
-      <li>It spends real tokens on your own subscriptions. Every run records what it cost.</li>
-    </ul>
+
+    <div class="two">
+      <div>
+        <h3>It can't tell you what to build</h3>
+        <p>
+          It writes a plan. You approve it. If the plan looks fine and it's actually wrong, you'll
+          get exactly the wrong thing — reviewed, tested, delivered on a tidy branch with a
+          confident write-up. The review catches bad code. It doesn't catch a bad idea.
+        </p>
+      </div>
+      <div>
+        <h3>Two repos means two merges</h3>
+        <p>
+          The branches share a name. Git doesn't care about that. You merge them yourself, and if
+          you land one and forget the other you've broken the build. Drove warns you in about three
+          places. It can't actually stop you.
+        </p>
+      </div>
+      <div>
+        <h3>It gives up after two rounds</h3>
+        <p>
+          If the reviewer keeps blocking and the builder keeps disagreeing, it stops and asks you.
+          I'd rather that than a third model casting a tie-break vote it can't really justify.
+          Plenty of people will disagree — that stage is designed and sitting in the TODO.
+        </p>
+      </div>
+      <div>
+        <h3>The Mac app isn't signed</h3>
+        <p>
+          So it installs from source, which means you need a terminal. I'm not going to tell you to
+          strip the quarantine flag off an app that can write to your repos. It's a $99 problem
+          rather than a code problem, and it'll get fixed when someone who isn't me wants to run
+          it.
+        </p>
+      </div>
+      <div>
+        <h3>It spends your money</h3>
+        <p>
+          Real tokens on your own subscription. Building this thing, the small jobs came in around
+          twenty or thirty cents and the meaty ones a dollar or two. Every run records what it
+          cost, so you can decide whether it was worth it rather than guess.
+        </p>
+      </div>
+      <div>
+        <h3>It's new</h3>
+        <p>
+          It builds itself now — the Stop button, the landed-branch detection and half the diff
+          viewer were written by Drove, reviewed by a model that didn't write them. That's a
+          decent smoke test. It's still version 0.1 by one person, so read the code before you
+          hand it anything that matters.
+        </p>
+      </div>
+    </div>
   </section>
 
   <footer>
     <div class="row">
       <span>MIT licensed.</span>
       <a href="https://github.com/depak7/drove">github.com/depak7/drove</a>
-      <span style="margin-left:auto;color:var(--text-3)">Runs on your machine. Drove adds no destination of its own.</span>
+      <span style="margin-left:auto;color:var(--text-3)">Runs on your machine. Drove doesn't send your code anywhere new.</span>
     </div>
   </footer>
 </div>
