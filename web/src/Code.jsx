@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import '@xterm/xterm/css/xterm.css'
 import { api } from './api'
-import { Hunks } from './components'
+import { Blob } from './components'
 
 /**
  * Reading the code the agents are working on, without leaving the app.
@@ -60,38 +60,6 @@ export function Code({ featureId }) {
         {blob ? <Blob blob={blob} /> : <p className="dim pad">Pick a file to read it.</p>}
       </div>
     </div>
-  )
-}
-
-function Blob({ blob }) {
-  // A file the feature changed is more useful as a diff than as text; everything else is text.
-  const [asDiff, setAsDiff] = useState(true)
-  const changed = Boolean(blob.diff?.trim())
-  useEffect(() => { setAsDiff(true) }, [blob.path])
-
-  return (
-    <>
-      <div className="fileview-head">
-        <b className="mono">{blob.path}</b>
-        <span className="grow" />
-        {changed && (
-          <div className="toggle">
-            <button className={asDiff ? 'on' : ''} onClick={() => setAsDiff(true)}>changes</button>
-            <button className={!asDiff ? 'on' : ''} onClick={() => setAsDiff(false)}>file</button>
-          </div>
-        )}
-      </div>
-      {blob.note && <p className="dim pad">{blob.note}</p>}
-      {changed && asDiff ? (
-        <Hunks text={blob.diff} />
-      ) : (
-        <pre className="block code">
-          {(blob.text || '').split('\n').map((line, i) => (
-            <div key={i}><i>{i + 1}</i>{line || ' '}</div>
-          ))}
-        </pre>
-      )}
-    </>
   )
 }
 

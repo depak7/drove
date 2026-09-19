@@ -276,6 +276,38 @@ export function Hunks({ text }) {
   )
 }
 
+export function Blob({ blob }) {
+  // A file the feature changed is more useful as a diff than as text; everything else is text.
+  const [asDiff, setAsDiff] = useState(true)
+  const changed = Boolean(blob.diff?.trim())
+  useEffect(() => { setAsDiff(true) }, [blob.path])
+
+  return (
+    <>
+      <div className="fileview-head">
+        <b className="mono">{blob.path}</b>
+        <span className="grow" />
+        {changed && (
+          <div className="toggle">
+            <button className={asDiff ? 'on' : ''} onClick={() => setAsDiff(true)}>changes</button>
+            <button className={!asDiff ? 'on' : ''} onClick={() => setAsDiff(false)}>file</button>
+          </div>
+        )}
+      </div>
+      {blob.note && <p className="dim pad">{blob.note}</p>}
+      {changed && asDiff ? (
+        <Hunks text={blob.diff} />
+      ) : (
+        <pre className="block code">
+          {(blob.text || '').split('\n').map((line, i) => (
+            <div key={i}><i>{i + 1}</i>{line || ' '}</div>
+          ))}
+        </pre>
+      )}
+    </>
+  )
+}
+
 /**
  * The diff, one file at a time.
  *
@@ -329,14 +361,7 @@ export function Diff({ files, repos, note, selected, onSelect, blob }) {
         </div>
         <div className="fileview">
           {blob ? (
-            <>
-              <div className="fileview-head">
-                <b className="mono">{blob.path}</b>
-                <span className="grow" />
-                <span className="dim">{blob.repo}</span>
-              </div>
-              <Hunks text={blob.diff} />
-            </>
+            <Blob blob={blob} />
           ) : (
             <p className="dim pad">Pick a file to see what changed in it.</p>
           )}

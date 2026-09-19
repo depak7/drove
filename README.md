@@ -82,8 +82,10 @@ A run's **diff** tab lists every changed file with its line counts and shows one
 with line numbers down both sides — the shape of a change is the first thing you need, and a
 single concatenated diff hides it.
 
-**code** browses the whole worktree, so you can read the file a change lives in rather than only
-the lines that moved. A file the feature touched opens on its diff, with a toggle to the full text.
+**code** browses the whole worktree, so you can read any file — not only the ones that changed.
+
+Both tabs render a file the same way: a file the feature touched opens on its diff, with a
+**file** toggle for the whole text, and anything untouched is simply shown.
 
 **terminal** is a real shell in that worktree. Agents work in a checkout you did not make, and
 sometimes the fastest thing is to run the tests yourself or fix one line by hand — having to leave
