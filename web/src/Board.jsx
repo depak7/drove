@@ -30,7 +30,15 @@ export function Board({ features, onOpen }) {
   return (
     <div className="board">
       {COLUMNS.map((col) => {
-        const cards = features.filter((f) => columnFor(f) === col.key)
+        // Landed work sinks to the bottom of Done. It is history; the delivered cards above
+        // it are the ones still waiting on a merge, and those are what you came here for.
+        const cards = features
+          .filter((f) => columnFor(f) === col.key)
+          .sort((a, b) =>
+            col.key === 'done'
+              ? Number(a.status === 'landed') - Number(b.status === 'landed')
+              : 0,
+          )
         return (
           <div className="bcol" key={col.key}>
             <div className="bcol-head">
@@ -54,9 +62,12 @@ function BoardCard({ feature, onOpen }) {
   const { at } = progress(status)
   return (
     <button
-      className={`bcard ${feature.status === 'awaiting_approval' ? 'gate' : ''} ${
-        needsYou(feature) && feature.status !== 'awaiting_approval' ? 'blocked' : ''
-      }`}
+      className={[
+        'bcard',
+        feature.status === 'awaiting_approval' ? 'gate' : '',
+        needsYou(feature) && feature.status !== 'awaiting_approval' ? 'blocked' : '',
+        feature.status === 'landed' ? 'landed' : '',
+      ].filter(Boolean).join(' ')}
       onClick={() => onOpen(feature.id)}
     >
       <div className="t">{feature.title}</div>
