@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from 'react'
+import { Analytics } from '@vercel/analytics/react'
 import { api } from './api'
 import { useStream } from './useStream'
 import {
@@ -378,6 +379,7 @@ export default function App() {
         </div>
       </div>
 
+      <Analytics />
     </div>
   )
 }
