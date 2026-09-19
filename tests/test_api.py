@@ -401,3 +401,41 @@ def test_cancelling_a_feature_not_owned_by_this_daemon_is_a_conflict(client):
     response = client.post(f"/api/features/{feature['id']}/cancel")
 
     assert response.status_code == 409
+
+
+def test_cancelling_during_planning_does_not_claim_commits_exist(client, monkeypatch):
+    """Nothing is committed while planning, so saying otherwise sends people hunting for it."""
+    from drove import db
+
+    ws = new_workspace(client)
+    feature = new_feature(client, ws)
+    with db.connect() as conn:
+        db.set_feature_status(conn, feature["id"], "planning")
+
+    # Take the cancellation path directly: the job itself is stubbed out in this fixture.
+    jobs._record_cancellation(feature["id"])
+
+    body = client.get(f"/api/features/{feature['id']}").json()
+    assert body["status"] == "cancelled"
+    assert "while it was planning" in body["error"]
+    assert "commits" not in body["error"]
+
+
+def test_cancelling_keeps_a_commit_an_earlier_attempt_recorded(client):
+    """Retry reuses the run row, so cancelling must not erase the sha that is already on it."""
+    from drove import db
+
+    ws = new_workspace(client)
+    feature = new_feature(client, ws)
+    with db.connect() as conn:
+        run = db.latest_run(conn, feature["id"])
+        db.finish_run(conn, run["id"], "delivered", head_sha="abc1234")
+        db.set_feature_status(conn, feature["id"], "executing")
+
+    jobs._record_cancellation(feature["id"])
+
+    with db.connect() as conn:
+        after = db.latest_run(conn, feature["id"])
+    assert after["head_sha"] == "abc1234"
+    assert after["status"] == "cancelled"
+    assert "commits it had already made" in after["error"]

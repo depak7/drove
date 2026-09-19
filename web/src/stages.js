@@ -83,8 +83,10 @@ export const NEEDS_YOU = {
     why: 'Drove was stopped before this finished — the app quit, the machine slept or shut down. Nothing is lost: work already committed is on the branch.',
   },
   cancelled: {
-    verb: 'Decide what to do',
-    why: 'You stopped this run. Anything already committed is on the branch.',
+    // No claim about commits here: the run's own error line says what stage it stopped in and
+    // whether anything was committed, and a generic promise above it contradicted that.
+    verb: 'Resume it',
+    why: 'You stopped this run. Resume picks it up from where it was, or tell it to do something different.',
   },
   no_changes: { verb: 'Decide what to do', why: 'The agent made no changes. The request may already be satisfied, or it was too vague to act on.' },
 }

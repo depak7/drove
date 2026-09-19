@@ -79,9 +79,21 @@ DEFAULT_KIND = "feat"
 MAX_BRANCH_SLUG = 48
 
 
+# Where the ask ends and its detail begins. "add a farewell function and write tests for it" is a
+# feature that happens to mention tests; scanning the whole sentence let the detail win.
+_CLAUSE_END = (" and ", ",", ";", ":", " then ", " so that ", " plus ")
+
+
+def _opening(task: str) -> str:
+    """The first clause — the ask itself, before everything it drags along."""
+    text = " ".join(task.lower().split())[:300]
+    cut = min((i for i in (text.find(sep) for sep in _CLAUSE_END) if i > 0), default=-1)
+    return text[:cut] if cut > 0 else text
+
+
 def _kind(task: str) -> str:
-    """feat / fix / docs / ... from the request itself."""
-    text = " ".join(task.lower().split())[:160]
+    """feat / fix / docs / ... from what is actually being asked for."""
+    text = _opening(task)[:160]
     for kind, words in BRANCH_KINDS:
         # Both boundaries, plus the ordinary inflections. Leading-only matched "fixtures" as a
         # fix and would have matched "contested" as a test.
@@ -134,7 +146,12 @@ def branch_for(task: str) -> str:
     branch that changes name under you is worse than one that is merely approximate.
     """
     kind = _kind(task)
-    return f"{kind}/{_slugify(_undouble(kind, provisional_title(task)))}"
+    # The opening clause names the work; everything after "and" or a comma is detail that only
+    # makes the branch trail off mid-phrase. Fall back to the title when the clause is too short
+    # to mean anything on its own.
+    opening = _opening(task)
+    subject = opening if len(opening) >= 12 else provisional_title(task)
+    return f"{kind}/{_slugify(_undouble(kind, subject))}"
 
 
 def unique_branch(workspace: Workspace, task: str, feature_id: str) -> str:

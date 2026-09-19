@@ -13,6 +13,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import time
 from concurrent.futures import Future
 from dataclasses import dataclass
 from typing import Any
@@ -111,6 +112,28 @@ def cancel(feature_id: str) -> bool:
     return True
 
 
+def _record_cancellation(feature_id: str) -> None:
+    """Write down that a person stopped this, in terms that are true of the stage it stopped in."""
+    with db.connect() as conn:
+        feature = db.get_feature(conn, feature_id)
+        status = feature["status"] if feature is not None else ""
+        reason = f"You stopped this {db.STOPPED_DURING.get(status, 'mid-run')}."
+        if status not in ("planning", "approved"):
+            # Only true once there was something to commit. Saying it during planning sends
+            # people looking for a branch that has nothing on it.
+            reason += " Any commits it had already made are still on the branch."
+        if run := db.latest_run(conn, feature_id):
+            # Not finish_run: that writes head_sha unconditionally, so cancelling a retry would
+            # erase the commit the previous attempt recorded.
+            conn.execute(
+                "UPDATE runs SET status = ?, ended_at = ?, error = ? WHERE id = ?",
+                ("cancelled", time.time(), reason, run["id"]),
+            )
+        db.set_feature_status(conn, feature_id, "cancelled")
+    emit(feature_id, "error", message=reason)
+    emit(feature_id, "status", status="cancelled")
+
+
 def _spawn(feature_id: str, coro) -> None:
     if is_busy(feature_id):
         raise JobError(f"feature {feature_id} already has a job running")
@@ -134,18 +157,7 @@ def _spawn(feature_id: str, coro) -> None:
         except asyncio.CancelledError:
             if not started and hasattr(coro, "close"):
                 coro.close()
-            with db.connect() as conn:
-                feature = db.get_feature(conn, feature_id)
-                status = feature["status"] if feature is not None else ""
-                reason = (
-                    f"You stopped this {db.STOPPED_DURING.get(status, 'mid-run')}. "
-                    "Any commits it had already made are still on the branch."
-                )
-                if run := db.latest_run(conn, feature_id):
-                    db.finish_run(conn, run["id"], "cancelled", error=reason)
-                db.set_feature_status(conn, feature_id, "cancelled")
-            emit(feature_id, "error", message=reason)
-            emit(feature_id, "status", status="cancelled")
+            _record_cancellation(feature_id)
             raise
         except Exception as exc:
             # Record why, and on the run — not only on the event stream, which is gone the

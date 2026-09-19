@@ -224,6 +224,11 @@ def test_an_explicit_branch_overrides_the_current_prefix(ws):
         ("document the publishing flow", "docs/publishing-flow"),
         ("tests for the reconciliation", "test/reconciliation"),
         ("bump playwright", "chore/playwright"),
+        # The kind comes from the ask, not from anything the sentence drags along after it:
+        # this is a feature that happens to mention tests, and the branch should say so.
+        ("add a farewell function and write tests for it", "feat/add-a-farewell-function"),
+        ("bump playwright and re-record the fixtures", "chore/playwright"),
+        ("document the flow, including the compare link", "docs/flow"),
         # "fixtures" is not a fix and "prefix" is not a fix: both need a trailing word boundary.
         ("fixtures need regenerating", "feat/fixtures-need-regenerating"),
         ("prefix every log line with the stage", "feat/prefix-every-log-line-with-the-stage"),

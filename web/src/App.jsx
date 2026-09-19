@@ -451,7 +451,7 @@ function Detail({
         {feature.iterations > 1 && <><span className="sep">·</span><span>{feature.iterations} runs</span></>}
         {feature.busy && (
           <button
-            className="ghost danger"
+            className="stop"
             onClick={() => {
               const keep = 'Stop this run? Commits stay on the branch and uncommitted edits stay in the worktree.'
               if (window.confirm(keep)) act(() => api.cancel(feature.id))
@@ -574,12 +574,12 @@ function Stopped({ feature, busy, onPivot, onRetry, onDiscard }) {
             disabled={busy}
             onClick={onRetry}
             title={
-              feature.status === 'interrupted'
+              ['interrupted', 'cancelled'].includes(feature.status)
                 ? 'Pick the work back up from where it stopped'
                 : 'Run the same plan again, unchanged'
             }
           >
-            {feature.status === 'interrupted' ? 'Resume' : 'Try again'}
+            {['interrupted', 'cancelled'].includes(feature.status) ? 'Resume' : 'Try again'}
           </button>
         )}
         <button className="primary" disabled={busy || !intent.trim()} onClick={send}>
