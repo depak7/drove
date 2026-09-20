@@ -309,68 +309,122 @@ export function Blob({ blob }) {
 }
 
 /**
- * The diff, one file at a time.
+ * Group a flat list of changed files into the directory tree they came from.
  *
- * A single concatenated blob is unreadable past a few hundred lines and gives no sense of shape:
- * you cannot see how many files moved, which ones are big, or jump to the one you care about.
- * The list answers that first, and the content follows the selection.
+ * Thirty changed files as a flat list is thirty near-identical paths sharing a prefix you have to
+ * read past every time. Nested, you see the shape of the change — "it's all in the harness layer"
+ * — before you read a single filename.
+ *
+ * Chains with one child collapse into one row, so `web/src/components/provenance` is a single
+ * line rather than four rows of scaffolding holding one file.
  */
-export function Diff({ files, repos, note, selected, onSelect, blob }) {
-  if (note) return <div className="card"><p className="dim">{note}</p></div>
-  if (!files?.length) {
-    return <div className="card"><p style={{ color: 'var(--text-3)' }}>No changes yet.</p></div>
+export function treeify(files) {
+  const root = { dirs: new Map(), files: [] }
+  for (const file of files) {
+    const parts = file.path.split('/')
+    const name = parts.pop()
+    let node = root
+    for (const part of parts) {
+      if (!node.dirs.has(part)) node.dirs.set(part, { dirs: new Map(), files: [] })
+      node = node.dirs.get(part)
+    }
+    node.files.push({ ...file, name })
   }
-  const multi = (repos?.length ?? 0) > 1
+
+  const flatten = (node, label) => {
+    // A directory holding exactly one directory and nothing else is scaffolding, not structure.
+    while (node.dirs.size === 1 && node.files.length === 0) {
+      const [only, child] = [...node.dirs.entries()][0]
+      label = label ? `${label}/${only}` : only
+      node = child
+    }
+    return {
+      label,
+      dirs: [...node.dirs.entries()]
+        .map(([name, child]) => flatten(child, name))
+        .sort((a, b) => a.label.localeCompare(b.label)),
+      files: node.files.sort((a, b) => a.name.localeCompare(b.name)),
+    }
+  }
+  return flatten(root, '')
+}
+
+/** A + M next to a filename, the way `git status --short` would put it. */
+const MARK = { added: 'A', modified: 'M', deleted: 'D' }
+
+function FileRow({ file, selected, onSelect, depth }) {
+  const key = `${file.repo}:${file.path}`
+  return (
+    <button
+      className={`fileitem ${selected === key ? 'on' : ''}`}
+      style={{ paddingLeft: 8 + depth * 14 }}
+      onClick={() => onSelect(file)}
+      title={file.path}
+    >
+      <span className={`dot ${file.status}`} />
+      <span className="fname">{file.name ?? file.path}</span>
+      {file.binary ? (
+        <span className="counts dim">bin</span>
+      ) : (
+        <span className="counts">
+          {file.added > 0 && <b className="add">+{file.added}</b>}
+          {file.removed > 0 && <b className="del"> −{file.removed}</b>}
+          <i className={`mark ${file.status}`}>{MARK[file.status] ?? 'M'}</i>
+        </span>
+      )}
+    </button>
+  )
+}
+
+function Branch({ node, selected, onSelect, depth = 0 }) {
   return (
     <>
-      {multi && (
-        <div className="banner warn" style={{ borderRadius: 'var(--radius)', marginBottom: 12, border: '1px solid #E8B33940' }}>
-          This change spans {repos.length} repositories. Their branches must be merged together —
-          landing one without the others breaks things.
+      {node.label && (
+        <div className="treedir" style={{ paddingLeft: 8 + depth * 14 }}>
+          {node.label.split('/').join(' / ')}
         </div>
       )}
-      <div className="split">
-        <div className="filelist">
-          <div className="eyebrow">{files.length} file{files.length === 1 ? '' : 's'}</div>
-          {files.map((f) => {
-            const key = `${f.repo}:${f.path}`
-            const name = f.path.split('/').pop()
-            const dir = f.path.slice(0, f.path.length - name.length)
-            return (
-              <button
-                key={key}
-                className={`fileitem ${selected === key ? 'on' : ''}`}
-                onClick={() => onSelect(f)}
-                title={f.path}
-              >
-                <span className={`dot ${f.status}`} />
-                <span className="fname">
-                  {multi && <em>{f.repo}/</em>}
-                  <span className="fdir">{dir}</span>{name}
-                </span>
-                {f.binary ? (
-                  <span className="counts dim">bin</span>
-                ) : (
-                  <span className="counts">
-                    <b className="add">+{f.added}</b> <b className="del">−{f.removed}</b>
-                  </span>
-                )}
-              </button>
-            )
-          })}
-        </div>
-        <div className="fileview">
-          {blob ? (
-            <Blob blob={blob} />
-          ) : (
-            <p className="dim pad">Pick a file to see what changed in it.</p>
-          )}
-        </div>
-      </div>
+      {node.dirs.map((dir) => (
+        <Branch
+          key={dir.label}
+          node={dir}
+          selected={selected}
+          onSelect={onSelect}
+          depth={node.label ? depth + 1 : depth}
+        />
+      ))}
+      {node.files.map((file) => (
+        <FileRow
+          key={`${file.repo}:${file.path}`}
+          file={file}
+          selected={selected}
+          onSelect={onSelect}
+          depth={node.label ? depth + 1 : depth}
+        />
+      ))}
     </>
   )
 }
 
+/** The changed files, nested. */
+export function Changes({ files, selected, onSelect }) {
+  const byRepo = new Map()
+  for (const file of files) {
+    if (!byRepo.has(file.repo)) byRepo.set(file.repo, [])
+    byRepo.get(file.repo).push(file)
+  }
+  const many = byRepo.size > 1
+  return (
+    <>
+      {[...byRepo.entries()].map(([repo, list]) => (
+        <div key={repo}>
+          {many && <div className="treerepo">{repo}</div>}
+          <Branch node={treeify(list)} selected={selected} onSelect={onSelect} />
+        </div>
+      ))}
+    </>
+  )
+}
 
 /**
  * What the app looked like when it was opened.

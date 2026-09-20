@@ -2,13 +2,13 @@ import { useCallback, useEffect, useState } from 'react'
 import { api } from './api'
 import { useStream } from './useStream'
 import {
-  BrowserChecks, Diff, Evidence, Gate, Log, Pill, Plan, Rail, Review, Source, StageLegend,
+  BrowserChecks, Evidence, Gate, Log, Pill, Plan, Rail, Review, Source, StageLegend,
 } from './components'
 import { WorkspaceSheet } from './Workspaces'
 import { SettingsSheet } from './Settings'
 import { Mark, Wordmark } from './Logo'
 import { PipelineStrip } from './Pipeline'
-import { Code, Terminal } from './Code'
+import { Files, Terminal } from './Code'
 import { Board } from './Board'
 import { NEEDS_YOU, needsYou } from './stages'
 import { Agents, Blank, Runs } from './Agents'
@@ -107,7 +107,7 @@ export default function App() {
 
   useEffect(() => {
     if (!current) return
-    if (tab === 'diff') api.changes(current.id).then(setChanges).catch(() => setChanges(null))
+    if (tab === 'files') api.changes(current.id).then(setChanges).catch(() => setChanges(null))
     if (tab === 'evidence') api.evidence(current.id).then(setEvidence).catch(() => setEvidence(null))
     if (tab === 'live') api.log(current.id).then(setReplay).catch(() => setReplay(null))
     if (tab === 'browser') api.browser(current.id).then(setBrowser).catch(() => setBrowser(null))
@@ -443,12 +443,13 @@ function Detail({
   // Only offer a tab when there is something behind it. An empty panel reads as broken; a tab
   // that is simply absent reads as "this run has not got there yet", which is the truth.
   const has = feature.has ?? {}
-  const tabs = ['plan', 'live', 'diff', 'code', 'terminal', 'source', 'review', 'browser', 'evidence']
+  const tabs = ['plan', 'live', 'files', 'terminal', 'source', 'review', 'browser', 'evidence']
     .filter((name) => {
       if (name === 'plan') return Boolean(feature.plan)
       if (name === 'live') return logs.length > 0 || has.log
       // Reading the code and opening a shell need a checkout, not a finished run.
-      if (name === 'code' || name === 'terminal') return Boolean(has.worktree)
+      if (name === 'files') return Boolean(has.worktree || has.diff)
+      if (name === 'terminal') return Boolean(has.worktree)
       return has[name]
     })
 
@@ -517,17 +518,15 @@ function Detail({
         </>
       )}
       {tab === 'live' && <Log lines={logs} replay={replay} connected={connected} />}
-      {tab === 'diff' && (
-        <Diff
-          files={changes?.files}
-          repos={changes?.repos}
-          note={changes?.note}
-          selected={picked}
-          onSelect={onPick}
+      {tab === 'files' && (
+        <Files
+          featureId={feature.id}
+          changes={changes}
+          picked={picked}
           blob={blob}
+          onPick={onPick}
         />
       )}
-      {tab === 'code' && <Code featureId={feature.id} />}
       {tab === 'terminal' && <Terminal featureId={feature.id} />}
       {tab === 'source' && (
         <Source

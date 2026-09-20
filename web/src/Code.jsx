@@ -1,21 +1,25 @@
 import { useEffect, useRef, useState } from 'react'
 import '@xterm/xterm/css/xterm.css'
 import { api } from './api'
-import { Blob } from './components'
+import { Blob, Changes } from './components'
 
 /**
- * Reading the code the agents are working on, without leaving the app.
+ * One panel for the code: what changed, and everything else.
  *
- * The diff answers "what changed". This answers the question that follows it — what the file
- * looks like now, and what else is around it — which otherwise means finding the worktree path
- * and opening an editor on a checkout you did not make.
+ * These were two tabs — a diff and a file browser — which meant answering "what does this file
+ * actually say now" involved leaving the diff, opening the browser, and finding the same file
+ * again in a tree. Same tree, same file pane, one toggle. The only thing that changes is which
+ * files are listed.
  */
-export function Code({ featureId }) {
-  const [dirs, setDirs] = useState({})          // path -> entries
+export function Files({ featureId, changes, picked, blob, onPick }) {
+  const [mode, setMode] = useState('changes')
+  const [dirs, setDirs] = useState({})
   const [open, setOpen] = useState({ '': true })
-  const [picked, setPicked] = useState(null)
-  const [blob, setBlob] = useState(null)
   const [error, setError] = useState('')
+
+  const files = changes?.files ?? []
+  // Nothing changed yet, so there is no "changes" view to default to.
+  useEffect(() => { if (changes && !files.length) setMode('all') }, [changes])
 
   const load = (path) => {
     if (dirs[path]) return
@@ -23,26 +27,19 @@ export function Code({ featureId }) {
       .then((body) => setDirs((d) => ({ ...d, [path]: body.entries })))
       .catch((e) => setError(String(e.message || e)))
   }
-
-  useEffect(() => { load('') }, [featureId])
+  useEffect(() => { if (mode === 'all') load('') }, [mode, featureId])
 
   const toggle = (path) => {
     setOpen((o) => ({ ...o, [path]: !o[path] }))
     load(path)
   }
 
-  const show = (path) => {
-    setPicked(path)
-    setBlob(null)
-    api.blob(featureId, path).then(setBlob).catch((e) => setError(String(e.message || e)))
-  }
-
   const rows = (path, depth) => (dirs[path] ?? []).map((entry) => (
     <div key={entry.path}>
       <button
-        className={`treerow ${picked === entry.path ? 'on' : ''}`}
+        className={`treerow ${picked === `:${entry.path}` || picked?.endsWith(`:${entry.path}`) ? 'on' : ''}`}
         style={{ paddingLeft: 8 + depth * 13 }}
-        onClick={() => (entry.dir ? toggle(entry.path) : show(entry.path))}
+        onClick={() => (entry.dir ? toggle(entry.path) : onPick({ repo: '', path: entry.path }))}
       >
         <span className="twisty">{entry.dir ? (open[entry.path] ? '▾' : '▸') : ''}</span>
         <span className={entry.dir ? 'tdir' : ''}>{entry.name}</span>
@@ -51,11 +48,28 @@ export function Code({ featureId }) {
     </div>
   ))
 
-  if (error) return <div className="card"><p className="dim">{error}</p></div>
+  if (changes?.note) return <div className="card"><p className="dim">{changes.note}</p></div>
 
   return (
     <div className="split">
-      <div className="filelist tree">{rows('', 0)}</div>
+      <div className="filelist">
+        <div className="listhead">
+          <div className="toggle">
+            <button className={mode === 'changes' ? 'on' : ''} onClick={() => setMode('changes')}>
+              changes{files.length ? ` ${files.length}` : ''}
+            </button>
+            <button className={mode === 'all' ? 'on' : ''} onClick={() => setMode('all')}>
+              all files
+            </button>
+          </div>
+        </div>
+        {error && <p className="dim pad">{error}</p>}
+        {mode === 'changes'
+          ? (files.length
+              ? <Changes files={files} selected={picked} onSelect={onPick} />
+              : <p className="dim pad">Nothing has changed on this branch yet.</p>)
+          : <div className="tree">{rows('', 0)}</div>}
+      </div>
       <div className="fileview">
         {blob ? <Blob blob={blob} /> : <p className="dim pad">Pick a file to read it.</p>}
       </div>
