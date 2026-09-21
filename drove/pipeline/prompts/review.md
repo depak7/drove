@@ -13,8 +13,11 @@ REPOSITORIES CHANGED (branch {branch})
 THE DIFF
 {diff}
 
-You are at {cwd}, which holds one checked-out repository per directory. Read any file for context,
-or run `git diff <base>...HEAD` inside a repo for its complete diff if the excerpt was truncated.
+You are at {cwd}, which holds one checked-out repository per directory. Start with the changed
+files and the supplied diff. Read a direct caller or dependency only when it is needed to prove or
+disprove a concrete failure. Do not tour unrelated code, hunt for speculative refactors, or rerun
+the full project suite; stop once you can make a justified merge decision. Run
+`git diff <base>...HEAD` inside a repo only when the excerpt was truncated.
 
 Judge on:
 - correctness: does it do what the intent says, and is it right? Trace the actual logic.

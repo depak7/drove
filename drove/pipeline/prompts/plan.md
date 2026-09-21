@@ -26,6 +26,9 @@ Produce a plan that:
 - calls out genuine risks: things that could break, assumptions you had to make, anything
   ambiguous in the task that you resolved by choosing
 
+Keep it concise: normally 2–6 steps, with one short sentence per step. Do not include code
+snippets, a repository tour, or explanations that do not change what the implementer must do.
+
 `risks` is required by the schema but is expected to be empty. Most routine work carries no real
 risk, and `[]` is the correct answer — it is not a field to fill. Something belongs there only if
 a reviewer would change their decision on reading it. Restating the plan, noting that a change

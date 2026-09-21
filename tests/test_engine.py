@@ -29,7 +29,7 @@ def trees(solo):
     return trees_mod.create(solo, "task-1", "feat/task-1")
 
 
-def stub_stages(monkeypatch, verdicts, committed=True, executes=None):
+def stub_stages(monkeypatch, verdicts, committed=True, executes=None, cache_read_tokens=0):
     """Replace execute/review with recorders so the state machine is what is under test."""
     calls = {"execute": [], "review": []}
 
@@ -42,6 +42,7 @@ def stub_stages(monkeypatch, verdicts, committed=True, executes=None):
             files_changed=["a.py"],
             tokens_in=10,
             tokens_out=5,
+            cache_read_tokens=cache_read_tokens,
         )
 
     async def fake_review(plan, trees_, workspace_, run_id, attempt=1, **kw):
@@ -89,16 +90,20 @@ async def test_persistent_disagreement_stops_for_a_human(trees, solo, monkeypatc
     assert "outstanding" in outcome.note
 
 
-async def test_the_implementer_keeps_its_session_across_a_fix(trees, solo, monkeypatch):
+async def test_a_small_builder_session_is_resumed_for_a_fix(trees, solo, monkeypatch):
     calls = stub_stages(monkeypatch, [blocked(), PASS])
     await engine.run_cycle(PLAN, trees, solo, "run-1", "add a thing", resume_session="sess-0")
 
     first, fix = calls["execute"][0], calls["execute"][1]
     assert first["resume_session"] == "sess-0"
-    assert fix["resume_session"] == first["resume_session"], (
-        "the fix round must continue the implementer's conversation, not start a new one — "
-        "it already knows what it wrote and what it tried"
-    )
+    assert fix["resume_session"] == first["resume_session"]
+
+
+async def test_an_oversized_builder_session_hands_off_to_a_fresh_fix(trees, solo, monkeypatch):
+    calls = stub_stages(monkeypatch, [blocked(), PASS], cache_read_tokens=130_000)
+    await engine.run_cycle(PLAN, trees, solo, "run-1", "add a thing")
+
+    assert calls["execute"][1]["resume_session"] is None
 
 
 async def test_every_review_round_gets_its_own_session(trees, solo, monkeypatch):

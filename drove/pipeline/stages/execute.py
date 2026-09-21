@@ -38,6 +38,7 @@ class ExecuteOutcome:
     cost_usd: float | None = None
     tokens_in: int = 0
     tokens_out: int = 0
+    cache_read_tokens: int = 0
     raw_log: Path | None = None
 
     @property
@@ -162,6 +163,7 @@ async def run_execute(
         cost_usd=result.cost_usd,
         tokens_in=result.tokens_in,
         tokens_out=result.tokens_out,
+        cache_read_tokens=result.cache_read_tokens,
         raw_log=raw_log,
     )
 

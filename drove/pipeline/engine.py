@@ -16,7 +16,7 @@ from drove.pipeline.schemas import PlanDoc, ReviewVerdict
 from drove.pipeline.stages import review as review_stage
 from drove.pipeline.stages import browser as browser_stage
 from drove.pipeline.stages import verify as verify_stage
-from drove.pipeline.stages.execute import ExecuteOutcome, run_execute
+from drove.pipeline.stages.execute import ExecuteOutcome, run_execute, should_resume
 from drove.vcs import remote as remote_mod
 from drove.vcs import tree as trees_mod
 from drove.vcs.tree import FeatureTrees
@@ -113,14 +113,20 @@ async def run_cycle(
             )
             return _finish(outcome, costs, trees)
 
-        report("fix", f"addressing {len(reviewed.verdict.blocking)} blocking issue(s)")
+        resume = should_resume(executed.tokens_in, executed.cache_read_tokens)
+        if resume:
+            report("fix", f"addressing {len(reviewed.verdict.blocking)} blocking issue(s)")
+        else:
+            report("fix", "starting a focused fix session after the builder context grew too large")
         fixed = await run_execute(
             plan,
             trees,
             workspace,
             run_id,
             f"fix: {intent}",
-            resume_session=executed.session_id,  # the implementer keeps its memory
+            # A fresh session has the plan file, current worktree and review verdict, but not
+            # millions of cached tokens from a long exploratory build conversation.
+            resume_session=executed.session_id if resume else None,
             on_event=on_event,
             prompt_override=review_stage.render_fix_prompt(reviewed.verdict, trees.branch),
         )

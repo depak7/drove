@@ -15,6 +15,10 @@ a change that alters an interface in one repo and its callers in another belongs
 Repository conventions apply: match the surrounding code's style, reuse what already exists rather
 than adding new abstractions, and do not add dependencies that are not already present.
 
+Start with the files named in the approved plan. Read direct callers or dependencies only when they
+are needed to make the requested change correct; do not inventory or refactor unrelated parts of
+the repository. Run the plan's targeted checks before expanding the investigation.
+
 PLAN
 {plan}
 
